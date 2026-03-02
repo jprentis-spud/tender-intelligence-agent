@@ -13,7 +13,8 @@ from tender_intelligence_agent.models import (
     TenderPackage,
 )
 from tender_intelligence_agent.services.briefing import generate_briefing as build_briefing
-from tender_intelligence_agent.services.clay_adapter import ClayAdapter, MockClayAdapter
+from tender_intelligence_agent.services.clay_adapter import ClayAdapter, ClayRestAdapter, MockClayAdapter
+from tender_intelligence_agent.services.clay_client import ClayComClient
 from tender_intelligence_agent.services.document_ingestion import build_tender_package
 from tender_intelligence_agent.services.openai_tender_analysis import TenderAnalyser
 from tender_intelligence_agent.services.qualification import qualify_bid as compute_qualification
@@ -22,7 +23,15 @@ mcp = FastMCP("tender-intelligence-agent")
 
 
 def _build_clay_adapter() -> ClayAdapter:
-    # Future extension point for real Clay MCP provider.
+    if settings.clay_adapter_mode == "rest":
+        if not settings.clay_api_key or not settings.clay_company_table_id:
+            raise RuntimeError(
+                "CLAY_ADAPTER_MODE=rest requires CLAY_API_KEY and CLAY_COMPANY_TABLE_ID to be set."
+            )
+        client = ClayComClient(api_key=settings.clay_api_key, base_url=settings.clay_base_url)
+        return ClayRestAdapter(client=client, table_id=settings.clay_company_table_id)
+
+    # Future extension point for additional Clay providers.
     return MockClayAdapter()
 
 
@@ -61,7 +70,7 @@ def analyse_tender(tender_package: dict | None = None, cleaned_tender_text: str 
 
 @mcp.tool()
 def get_clay_intelligence(organisation: str) -> dict:
-    """Get buyer intelligence from Clay (mock adapter by default)."""
+    """Get buyer intelligence from Clay adapter (mock by default; REST optional)."""
     intelligence = clay_adapter.get_intelligence(organisation)
     return intelligence.model_dump()
 
@@ -92,11 +101,6 @@ def generate_briefing(tender_analysis: dict, clay_intelligence: dict, qualificat
 
 def run() -> None:
     """Run the MCP server with stdio transport for ChatGPT Apps integration."""
-    if settings.clay_adapter_mode != "mock":
-        raise RuntimeError(
-            "Only CLAY_ADAPTER_MODE=mock is currently implemented. "
-            "Add a real Clay adapter to enable live integration."
-        )
     mcp.run(transport="stdio")
 
 

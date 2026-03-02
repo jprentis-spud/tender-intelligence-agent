@@ -38,6 +38,7 @@ class ClayIntelligence(BaseModel):
     organisation: str
     company_profile: str
     strategic_signals: list[str] = Field(default_factory=list)
+    leadership_changes: list[str] = Field(default_factory=list)
     market_activity: list[str] = Field(default_factory=list)
     relationships: list[str] = Field(default_factory=list)
     competitive_context: list[str] = Field(default_factory=list)

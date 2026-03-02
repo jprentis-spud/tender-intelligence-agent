@@ -32,6 +32,7 @@ This MCP server exposes tools for a ChatGPT App frontend to decide whether to bi
 │       └── services/
 │           ├── briefing.py
 │           ├── clay_adapter.py
+│           ├── clay_client.py
 │           ├── document_ingestion.py
 │           ├── document_typing.py
 │           ├── openai_tender_analysis.py
@@ -122,6 +123,7 @@ Analysis strategy:
   "organisation": "...",
   "company_profile": "...",
   "strategic_signals": ["..."],
+  "leadership_changes": ["..."],
   "market_activity": ["..."],
   "relationships": ["..."],
   "competitive_context": ["..."],
@@ -186,6 +188,106 @@ Analysis strategy:
 - **Safe large-set handling**: ingestion limits per-call file processing to first 200 file paths.
 
 ---
+
+
+## Clay.com REST API integration notes
+
+> ⚠️ Clay's REST API documentation and endpoint naming may differ across accounts/workspaces.
+> The examples below reflect the safest commonly used REST patterns and are implemented in a configurable client (`ClayComClient`).
+> Validate exact paths/params against your Clay workspace docs before production use.
+
+### Authentication with API key
+
+Use an API key header (Bearer token pattern):
+
+```bash
+curl -X GET "https://api.clay.com/api/v1/tables" \
+  -H "Authorization: Bearer $CLAY_API_KEY" \
+  -H "Accept: application/json"
+```
+
+### List available tables
+
+```bash
+curl -X GET "https://api.clay.com/api/v1/tables" \
+  -H "Authorization: Bearer $CLAY_API_KEY" \
+  -H "Accept: application/json"
+```
+
+Typical response shape:
+
+```json
+{
+  "tables": [
+    {
+      "id": "tbl_123",
+      "name": "company_enrichment",
+      "workspace_id": "ws_456"
+    }
+  ]
+}
+```
+
+### Query a table row by field value (domain)
+
+```bash
+curl -G "https://api.clay.com/api/v1/tables/tbl_123/rows" \
+  -H "Authorization: Bearer $CLAY_API_KEY" \
+  --data-urlencode "field=domain" \
+  --data-urlencode "value=acme.com" \
+  --data-urlencode "limit=1"
+```
+
+Typical enriched row response shape:
+
+```json
+{
+  "rows": [
+    {
+      "id": "row_001",
+      "domain": "acme.com",
+      "company_name": "Acme Inc",
+      "firmographics_summary": "Enterprise B2B software provider in North America",
+      "strategic_signals": [
+        "Announced AI-led cost transformation program",
+        "Expanded EMEA partner ecosystem"
+      ],
+      "leadership_changes": [
+        "New CIO appointed in Q2"
+      ],
+      "market_activity": [
+        "Opened two new procurement-led initiatives"
+      ],
+      "relationships": [
+        "Existing advisory relationship with major SI"
+      ],
+      "competitive_context": [
+        "Incumbent supplier under performance review"
+      ],
+      "tech_stack": ["Salesforce", "Snowflake", "Azure"],
+      "funding": {
+        "last_round": "Series D",
+        "amount": 120000000
+      },
+      "hiring_trends": {
+        "engineering_90d": 14,
+        "procurement_90d": 4
+      }
+    }
+  ]
+}
+```
+
+### Python async client
+
+See `src/tender_intelligence_agent/services/clay_client.py` for `ClayComClient`.
+
+Safest fallback approach if API docs/endpoints are uncertain:
+- Keep `CLAY_ADAPTER_MODE=mock` in production until endpoint contract is confirmed.
+- Validate `list_tables` first, then run a single-domain lookup on a non-critical table.
+- Map Clay fields defensively (accept both top-level and nested `fields` keys).
+- Log raw payload samples in staging before tightening strict parsing.
+
 
 ## Local run instructions
 
