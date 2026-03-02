@@ -60,8 +60,9 @@ def _score_commercial_viability(analysis: TenderAnalysis, signal_counts: dict[st
 def _score_risk_level(analysis: TenderAnalysis, signal_counts: dict[str, int]) -> float:
     score = 20.0 + min(len(analysis.risks) * 6.0, 36.0)
     score += min(signal_counts["conflicts"] * 12.0, 30.0)
-    score += signal_counts["hidden_obligations"] * 10.0
+    score += signal_counts["hidden_obligations"] * 12.0
     score += signal_counts["timeline_issues"] * 10.0
+    score += signal_counts["pricing_constraints"] * 10.0
     score += signal_counts["missing_info"] * 8.0
     return max(min(score, 100.0), 0.0)
 

@@ -16,6 +16,7 @@ from tender_intelligence_agent.services.briefing import generate_briefing as bui
 from tender_intelligence_agent.services.clay_adapter import ClayAdapter, ClayRestAdapter, MockClayAdapter
 from tender_intelligence_agent.services.clay_client import ClayComClient
 from tender_intelligence_agent.services.document_ingestion import build_tender_package
+from tender_intelligence_agent.services.clay_pipeline_sync import ClayPipelineSync, ClaySyncConfig
 from tender_intelligence_agent.services.openai_tender_analysis import TenderAnalyser
 from tender_intelligence_agent.services.qualification import qualify_bid as compute_qualification
 
@@ -97,6 +98,31 @@ def generate_briefing(tender_analysis: dict, clay_intelligence: dict, qualificat
 
     briefing = build_briefing(analysis, clay, qualified)
     return briefing.model_dump()
+
+
+@mcp.tool()
+def sync_tender_to_clay(buyer_name: str, buyer_domain: str, tender_analysis: dict) -> dict:
+    """Upsert Buyer by domain, then create Tender row linked via buyer_domain."""
+    if not settings.clay_api_key or not settings.clay_buyer_table_id or not settings.clay_tender_table_id:
+        raise ValueError(
+            "CLAY_API_KEY, CLAY_BUYER_TABLE_ID and CLAY_TENDER_TABLE_ID are required for sync_tender_to_clay."
+        )
+
+    analysis = TenderAnalysis.model_validate(tender_analysis)
+    sync = ClayPipelineSync(
+        ClaySyncConfig(
+            api_key=settings.clay_api_key,
+            base_url=settings.clay_base_url,
+            buyer_table_id=settings.clay_buyer_table_id,
+            tender_table_id=settings.clay_tender_table_id,
+        )
+    )
+
+    return sync.upsert_buyer_and_create_tender(
+        buyer_name=buyer_name,
+        buyer_domain=buyer_domain,
+        tender_analysis=analysis.model_dump(),
+    )
 
 
 def run() -> None:

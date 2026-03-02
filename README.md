@@ -11,6 +11,7 @@ This MCP server exposes tools for a ChatGPT App frontend to decide whether to bi
 3. `get_clay_intelligence` — fetch buyer intelligence via a replaceable Clay integration layer (mock included).
 4. `qualify_bid` — apply transparent scoring logic to produce Bid / No Bid / Conditional recommendation.
 5. `generate_briefing` — create an executive summary for decision makers.
+6. `sync_tender_to_clay` — upsert Buyer by domain then create Tender row in Clay.
 
 ---
 
@@ -158,6 +159,29 @@ Analysis strategy:
 }
 ```
 
+
+### `sync_tender_to_clay`
+
+**Input**
+- `buyer_name: string`
+- `buyer_domain: string`
+- `tender_analysis: object` (schema from `analyse_tender`)
+
+**Output**
+```json
+{
+  "buyer": {"id": "row_x", "domain": "acme.com", "company_name": "Acme"},
+  "tender": {"id": "row_y", "buyer_domain": "acme.com", "tender_title": "..."}
+}
+```
+
+Flow:
+1) normalize `buyer_domain`
+2) upsert Buyer in Buyer Intelligence table (`domain` unique key)
+3) create Tender row in Tender Pipeline table with `buyer_domain`
+
+`buyer_ref` is optional and intentionally skipped for hackathon simplicity; Clay lookup/waterfall can link by domain.
+
 ### `generate_briefing`
 
 **Input**
@@ -278,6 +302,22 @@ Typical enriched row response shape:
 }
 ```
 
+
+
+### Create a row
+
+```bash
+curl -X POST "https://api.clay.com/api/v1/tables/tbl_123/rows" \
+  -H "Authorization: Bearer $CLAY_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "fields": {
+      "domain": "acme.com",
+      "company_name": "Acme Inc"
+    }
+  }'
+```
+
 ### Python async client
 
 See `src/tender_intelligence_agent/services/clay_client.py` for `ClayComClient`.
@@ -303,8 +343,11 @@ pip install -e .
 
 ```bash
 cp .env.example .env
-# set OPENAI_API_KEY in .env or export in shell
+# edit .env with your real keys (do not commit secrets)
 ```
+
+We keep `.env.example` in git as a template, and use `.env` locally for actual values.
+The included `.gitignore` excludes `.env` so credentials are not committed.
 
 ### 3) Run MCP server (stdio)
 
