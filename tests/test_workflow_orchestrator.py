@@ -55,7 +55,7 @@ def test_orchestrator_success_order_and_outputs() -> None:
             "rationale": "good",
         }
 
-    def generate_briefing(_: dict) -> dict:
+    def generate_briefing(*_: object, **__: object) -> dict:
         calls.append("briefing")
         return {
             "title": "t",
@@ -118,7 +118,7 @@ def test_orchestrator_fails_fast_before_sync_when_buyer_missing() -> None:
             sync_tender_to_clay=never_called,
             get_clay_intelligence=lambda *_: {},
             qualify_bid=never_called,
-            generate_briefing=lambda *_: {},
+            generate_briefing=lambda *_, **__: {},
         ),
         buyer_name="",
         buyer_domain="acme.com",

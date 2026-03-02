@@ -233,6 +233,34 @@ Execution order (fail-fast): ingest -> analyse -> validate buyer identity -> syn
 
 ---
 
+
+## Response style controller
+
+`StyleConfig` supports:
+- `mode`: `INTERMEDIATE | FINAL`
+- `audience`: `BID_MANAGER` (default)
+
+Behavior:
+- **INTERMEDIATE**: <=120 words, <=5 bullets, no tender text restatement, ends with one forward question.
+- **FINAL**: detailed structured briefing sections.
+
+Threading through tools:
+- `analyse_tender(..., style_config={"mode":"INTERMEDIATE","audience":"BID_MANAGER"})`
+- `qualify_bid(..., style_config={"mode":"INTERMEDIATE","audience":"BID_MANAGER"})`
+- `generate_briefing(..., style_config={"mode":"FINAL","audience":"BID_MANAGER"})`
+
+Prompt templates:
+- Analyse (INTERMEDIATE): `Mode: INTERMEDIATE. Respond concisely for a BID_MANAGER. Do not repeat source tender text. Max 120 words, up to 5 bullets, and end with one forward question.`
+- Qualify (INTERMEDIATE): `Mode: INTERMEDIATE. Provide short bid/no-bid rationale with key deltas only. Max 120 words, max 5 bullets, no tender-text restatement, and end with one decision-driving question.`
+- Briefing (FINAL): `Mode: FINAL for BID_MANAGER. Produce a detailed briefing with sections: Executive Summary, Recommendation, Win Themes, Key Risks, Next Actions. Include quantified values when available (win_probability, risk_level, strategic_value).`
+
+Example 4-turn transcript:
+1. `analyse_tender` (INTERMEDIATE) → concise status + one question.
+2. `qualify_bid` (INTERMEDIATE) → concise recommendation + one question.
+3. `sync_tender_to_clay` → persistence confirmation.
+4. `generate_briefing` (FINAL) → full detailed sections with quantified metrics.
+
+
 ## Architecture notes
 
 - **Modular services**: ingestion, document typing, OpenAI analysis, Clay adapter, qualification, briefing are separated.

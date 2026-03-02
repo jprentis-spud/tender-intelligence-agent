@@ -13,6 +13,7 @@ from tender_intelligence_agent.models import (
     TenderAnalysis,
     TenderPackage,
     WorkflowResult,
+    StyleConfig,
 )
 from tender_intelligence_agent.services.briefing import generate_briefing as build_briefing
 from tender_intelligence_agent.services.clay_adapter import ClayAdapter, ClayRestAdapter, MockClayAdapter
@@ -22,6 +23,13 @@ from tender_intelligence_agent.services.document_ingestion import build_tender_p
 from tender_intelligence_agent.services.openai_tender_analysis import TenderAnalyser
 from tender_intelligence_agent.services.qualification import qualify_bid as compute_qualification
 from tender_intelligence_agent.services.workflow_orchestrator import WorkflowDependencies, run_tender_workflow as orchestrate
+from tender_intelligence_agent.services.style_controller import (
+    FINAL_BRIEFING_PROMPT,
+    INTERMEDIATE_ANALYSE_PROMPT,
+    INTERMEDIATE_QUALIFY_PROMPT,
+    build_intermediate_status,
+    render_response,
+)
 
 mcp = FastMCP("tender-intelligence-agent")
 
@@ -54,7 +62,7 @@ def ingest_tender_documents(
 
 
 @mcp.tool()
-def analyse_tender(tender_package: dict | None = None, cleaned_tender_text: str | None = None) -> dict:
+def analyse_tender(tender_package: dict | None = None, cleaned_tender_text: str | None = None, style_config: dict | None = None) -> dict:
     """Analyse tender package using primary document plus supporting context.
 
     Backward compatibility: cleaned_tender_text is wrapped into a single-document package.
@@ -69,7 +77,13 @@ def analyse_tender(tender_package: dict | None = None, cleaned_tender_text: str 
         raise ValueError("Provide tender_package or cleaned_tender_text.")
 
     analysis = analyser.analyse_package(package)
-    return analysis.model_dump()
+    style = StyleConfig.model_validate(style_config or {"mode": "INTERMEDIATE", "audience": "BID_MANAGER"})
+    status = build_intermediate_status(
+        "analyse_tender",
+        {"requirements": len(analysis.requirements), "risks": len(analysis.risks), "complexity": analysis.complexity},
+        style,
+    )
+    return {**analysis.model_dump(), "agent_response": status, "prompt_template": INTERMEDIATE_ANALYSE_PROMPT if style.mode == "INTERMEDIATE" else FINAL_BRIEFING_PROMPT}
 
 
 @mcp.tool()
@@ -85,6 +99,7 @@ def qualify_bid(
     clay_intelligence: dict,
     us_context: dict | None = None,
     competitor_context: dict | None = None,
+    style_config: dict | None = None,
 ) -> dict:
     """Combine tender analysis and Clay intelligence into transparent bid qualification."""
     try:
@@ -97,7 +112,13 @@ def qualify_bid(
     _ = us_context, competitor_context
 
     qualification: QualificationResult = compute_qualification(analysis, clay)
-    return qualification.model_dump()
+    style = StyleConfig.model_validate(style_config or {"mode": "INTERMEDIATE", "audience": "BID_MANAGER"})
+    message = build_intermediate_status(
+        "qualify_bid",
+        {"recommendation": qualification.recommendation, "win_probability": qualification.win_probability, "risk_level": qualification.risk_level},
+        style,
+    )
+    return {**qualification.model_dump(), "agent_response": message, "prompt_template": INTERMEDIATE_QUALIFY_PROMPT if style.mode == "INTERMEDIATE" else FINAL_BRIEFING_PROMPT}
 
 
 @mcp.tool()
@@ -105,6 +126,7 @@ def generate_briefing(
     qualification: dict,
     tender_analysis: dict | None = None,
     clay_intelligence: dict | None = None,
+    style_config: dict | None = None,
 ) -> dict:
     """Generate executive tender briefing.
 
@@ -126,7 +148,17 @@ def generate_briefing(
             immediate_actions=qualified.required_resources[:3],
         )
 
-    return briefing.model_dump()
+    style = StyleConfig.model_validate(style_config or {"mode": "FINAL", "audience": "BID_MANAGER"})
+    detailed = (
+        f"Executive Summary\n{briefing.summary}\n\n"
+        f"Recommendation\n{qualified.recommendation} (win_probability={qualified.win_probability:.2f}, "
+        f"risk_level={qualified.risk_level}, strategic_value={qualified.strategic_value}).\n\n"
+        f"Win Themes\n- Align response to evaluation criteria\n- Emphasize delivery credibility\n\n"
+        f"Key Risks\n- " + "\n- ".join(qualified.key_risks[:5] or ["No critical risks provided"]) + "\n\n"
+        f"Next Actions\n- " + "\n- ".join(briefing.immediate_actions[:5] or ["Confirm bid governance"])
+    )
+    rendered = render_response(detailed if style.mode == "FINAL" else briefing.summary, style)
+    return {**briefing.model_dump(), "agent_response": rendered, "prompt_template": FINAL_BRIEFING_PROMPT if style.mode == "FINAL" else INTERMEDIATE_QUALIFY_PROMPT}
 
 
 @mcp.tool()

@@ -29,7 +29,7 @@ class WorkflowDependencies:
     sync_tender_to_clay: Callable[..., dict]
     get_clay_intelligence: Callable[[str], dict]
     qualify_bid: Callable[..., dict]
-    generate_briefing: Callable[[dict], dict]
+    generate_briefing: Callable[..., dict]
 
 
 
@@ -56,6 +56,7 @@ def _emit(log_fn: LogFn | None, correlation_id: str, step: str, status: str, deb
 def _workflow_failure(
     *,
     correlation_id: str,
+    started_at: str,
     step: str,
     exc: Exception,
     debug_context: dict[str, Any] | None = None,
@@ -63,13 +64,13 @@ def _workflow_failure(
     return WorkflowResult(
         ok=False,
         correlation_id=correlation_id,
-        started_at="",
+        started_at=started_at,
         finished_at=_utc_now(),
         error=WorkflowError(
             step=step,
             error_type=type(exc).__name__,
             message=str(exc),
-            debug_context=debug_context or {},
+            debug_context={k: str(v) for k, v in (debug_context or {}).items()},
         ),
     )
 
@@ -134,7 +135,10 @@ def run_tender_workflow(
 
         step = "analyse_tender"
         _emit(log_fn, corr_id, step, "started", {"primary_document_type": package.primary_document_type})
-        analysis_payload = deps.analyse_tender(tender_package=package.model_dump())
+        analysis_payload = deps.analyse_tender(
+            tender_package=package.model_dump(),
+            style_config={"mode": "INTERMEDIATE", "audience": "BID_MANAGER"},
+        )
         analysis = validate_tender_analysis(analysis_payload)
         _emit(log_fn, corr_id, step, "completed", {"requirements": len(analysis.requirements)})
 
@@ -168,13 +172,19 @@ def run_tender_workflow(
             clay_intelligence=clay.model_dump(),
             us_context=us_context,
             competitor_context=competitor_context,
+            style_config={"mode": "INTERMEDIATE", "audience": "BID_MANAGER"},
         )
         qualification = validate_qualification_result(qualification_payload)
         _emit(log_fn, corr_id, step, "completed", {"recommendation": qualification.recommendation})
 
         step = "generate_briefing"
         _emit(log_fn, corr_id, step, "started")
-        briefing_payload = deps.generate_briefing(qualification.model_dump())
+        briefing_payload = deps.generate_briefing(
+            qualification.model_dump(),
+            tender_analysis=analysis.model_dump(),
+            clay_intelligence=clay.model_dump(),
+            style_config={"mode": "FINAL", "audience": "BID_MANAGER"},
+        )
         briefing = Briefing.model_validate(briefing_payload)
         _emit(log_fn, corr_id, step, "completed", {"title": briefing.title})
 
@@ -196,6 +206,7 @@ def run_tender_workflow(
         _emit(log_fn, corr_id, locals().get("step", "unknown"), "failed", {"message": str(exc)})
         return _workflow_failure(
             correlation_id=corr_id,
+            started_at=started_at,
             step=locals().get("step", "unknown"),
             exc=exc,
             debug_context={"buyer_name": buyer_name, "buyer_domain": buyer_domain},
@@ -204,6 +215,7 @@ def run_tender_workflow(
         _emit(log_fn, corr_id, locals().get("step", "unknown"), "failed", {"message": str(exc)})
         return _workflow_failure(
             correlation_id=corr_id,
+            started_at=started_at,
             step=locals().get("step", "unknown"),
             exc=exc,
             debug_context={"buyer_name": buyer_name, "buyer_domain": buyer_domain},

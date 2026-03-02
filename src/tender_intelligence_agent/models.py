@@ -70,6 +70,11 @@ class Briefing(BaseModel):
     immediate_actions: list[str] = Field(default_factory=list)
 
 
+class StyleConfig(BaseModel):
+    mode: Literal["INTERMEDIATE", "FINAL"] = "INTERMEDIATE"
+    audience: Literal["BID_MANAGER"] = "BID_MANAGER"
+
+
 class WorkflowError(BaseModel):
     step: str
     error_type: str
