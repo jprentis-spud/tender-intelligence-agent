@@ -1,0 +1,25 @@
+{
+  "ingest_tender_documents": {
+    "file_paths": [
+      "/data/tenders/RFP_Main.txt",
+      "/data/tenders/Requirements.txt",
+      "/data/tenders/Pricing_Schedule.txt",
+      "/data/tenders/Terms_and_Conditions.txt"
+    ]
+  },
+  "analyse_tender": {
+    "tender_package": "<output from ingest_tender_documents>"
+  },
+  "get_clay_intelligence": {
+    "organisation": "example.com"
+  },
+  "qualify_bid": {
+    "tender_analysis": "<output from analyse_tender>",
+    "clay_intelligence": "<output from get_clay_intelligence>"
+  },
+  "generate_briefing": {
+    "tender_analysis": "<output from analyse_tender>",
+    "clay_intelligence": "<output from get_clay_intelligence>",
+    "qualification": "<output from qualify_bid>"
+  }
+}
