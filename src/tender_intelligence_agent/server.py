@@ -25,12 +25,12 @@ mcp = FastMCP("tender-intelligence-agent")
 
 def _build_clay_adapter() -> ClayAdapter:
     if settings.clay_adapter_mode == "rest":
-        if not settings.clay_api_key or not settings.clay_company_table_id:
+        if not settings.clay_api_key or not settings.clay_buyer_table_id:
             raise RuntimeError(
-                "CLAY_ADAPTER_MODE=rest requires CLAY_API_KEY and CLAY_COMPANY_TABLE_ID to be set."
+                "CLAY_ADAPTER_MODE=rest requires CLAY_API_KEY and CLAY_BUYER_TABLE_ID to be set."
             )
         client = ClayComClient(api_key=settings.clay_api_key, base_url=settings.clay_base_url)
-        return ClayRestAdapter(client=client, table_id=settings.clay_company_table_id)
+        return ClayRestAdapter(client=client, table_id=settings.clay_buyer_table_id)
 
     # Future extension point for additional Clay providers.
     return MockClayAdapter()
@@ -126,8 +126,17 @@ def sync_tender_to_clay(buyer_name: str, buyer_domain: str, tender_analysis: dic
 
 
 def run() -> None:
-    """Run the MCP server with stdio transport for ChatGPT Apps integration."""
-    mcp.run(transport="stdio")
+    """Run the MCP server.
+
+    Transport is controlled by MCP_TRANSPORT env var:
+      - "sse"   (default) — HTTP+SSE for remote deployment (Railway, etc.)
+      - "stdio" — local stdio for ChatGPT Apps / desktop clients
+    """
+    mcp.run(
+        transport=settings.transport,
+        host=settings.host,
+        port=settings.port,
+    )
 
 
 if __name__ == "__main__":
