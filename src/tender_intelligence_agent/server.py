@@ -45,16 +45,25 @@ def ingest_tender_documents(
     file_path: str | None = None,
     text: str | None = None,
 ) -> dict:
-    """Ingest one-or-many tender docs into a structured TenderPackage."""
+    """Step 1: Ingest tender documents into a structured package.
+
+    Call this first when the user provides tender text or file paths.
+    After calling, briefly confirm what was ingested (document count, primary doc type)
+    and ask the user if they'd like to proceed with analysis.
+    Do NOT summarise the full contents — just confirm receipt.
+    """
     package = build_tender_package(file_paths=file_paths, file_path=file_path, text=text)
     return package.model_dump()
 
 
 @mcp.tool()
 def analyse_tender(tender_package: dict | None = None, cleaned_tender_text: str | None = None) -> dict:
-    """Analyse tender package using primary document plus supporting context.
+    """Step 2: Analyse the tender package to extract requirements, risks, and evaluation criteria.
 
-    Backward compatibility: cleaned_tender_text is wrapped into a single-document package.
+    Call this after ingestion. Present the key findings conversationally — highlight
+    the most important requirements and risks, then ask the user if they want to
+    pull buyer intelligence from Clay before qualifying the bid.
+    Do NOT dump the entire analysis at once.
     """
     analyser = TenderAnalyser()
 
@@ -71,14 +80,24 @@ def analyse_tender(tender_package: dict | None = None, cleaned_tender_text: str 
 
 @mcp.tool()
 def get_clay_intelligence(organisation: str) -> dict:
-    """Get buyer intelligence from Clay adapter (mock by default; REST optional)."""
+    """Step 3: Fetch buyer intelligence from Clay for the issuing organisation.
+
+    Call this after analysis to enrich the picture with buyer context.
+    Share the most relevant signals (leadership changes, strategic direction,
+    competitive landscape) and ask whether the user wants to run bid qualification.
+    """
     intelligence = clay_adapter.get_intelligence(organisation)
     return intelligence.model_dump()
 
 
 @mcp.tool()
 def qualify_bid(tender_analysis: dict, clay_intelligence: dict) -> dict:
-    """Combine tender analysis and Clay intelligence into transparent bid qualification."""
+    """Step 4: Score the bid opportunity using tender analysis and buyer intelligence.
+
+    Produces a Bid / No Bid / Conditional recommendation with a transparent
+    scoring breakdown. Present the recommendation and key factors, then ask
+    if the user wants a full executive briefing or to sync the tender to Clay.
+    """
     try:
         analysis = TenderAnalysis.model_validate(tender_analysis)
         clay = ClayIntelligence.model_validate(clay_intelligence)
@@ -91,7 +110,11 @@ def qualify_bid(tender_analysis: dict, clay_intelligence: dict) -> dict:
 
 @mcp.tool()
 def generate_briefing(tender_analysis: dict, clay_intelligence: dict, qualification: dict) -> dict:
-    """Generate executive tender briefing for decision stakeholders."""
+    """Step 5: Generate an executive briefing summarising the tender opportunity.
+
+    Call this when the user wants the full briefing document with recommendations
+    and immediate actions for decision stakeholders.
+    """
     analysis = TenderAnalysis.model_validate(tender_analysis)
     clay = ClayIntelligence.model_validate(clay_intelligence)
     qualified = QualificationResult.model_validate(qualification)
@@ -102,7 +125,13 @@ def generate_briefing(tender_analysis: dict, clay_intelligence: dict, qualificat
 
 @mcp.tool()
 def sync_tender_to_clay(buyer_name: str, buyer_domain: str, tender_analysis: dict) -> dict:
-    """Upsert Buyer by domain, then create Tender row linked via buyer_domain."""
+    """Step 6: Save the buyer and tender to Clay CRM tables.
+
+    IMPORTANT: Always offer to call this after qualification or briefing.
+    This upserts the Buyer row (by domain) and creates a Tender row in Clay
+    so the opportunity is tracked in the pipeline. Ask the user for the
+    buyer_name and buyer_domain if not already known.
+    """
     if not settings.clay_api_key or not settings.clay_buyer_table_id or not settings.clay_tender_table_id:
         raise ValueError(
             "CLAY_API_KEY, CLAY_BUYER_TABLE_ID and CLAY_TENDER_TABLE_ID are required for sync_tender_to_clay."
