@@ -79,14 +79,14 @@ def analyse_tender(tender_package: dict | None = None, cleaned_tender_text: str 
 
 
 @mcp.tool()
-def get_clay_intelligence(organisation: str) -> dict:
+async def get_clay_intelligence(organisation: str) -> dict:
     """Step 3: Fetch buyer intelligence from Clay for the issuing organisation.
 
     Call this after analysis to enrich the picture with buyer context.
     Share the most relevant signals (leadership changes, strategic direction,
     competitive landscape) and ask whether the user wants to run bid qualification.
     """
-    intelligence = clay_adapter.get_intelligence(organisation)
+    intelligence = await clay_adapter.get_intelligence(organisation)
     return intelligence.model_dump()
 
 

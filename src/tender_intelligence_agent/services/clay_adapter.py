@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 from abc import ABC, abstractmethod
 from typing import Any
 
@@ -14,14 +13,14 @@ class ClayAdapter(ABC):
     """Abstraction layer so real Clay implementation can be swapped later."""
 
     @abstractmethod
-    def get_intelligence(self, organisation: str) -> ClayIntelligence:
+    async def get_intelligence(self, organisation: str) -> ClayIntelligence:
         raise NotImplementedError
 
 
 class MockClayAdapter(ClayAdapter):
     """Mock implementation when real Clay MCP integration is unavailable."""
 
-    def get_intelligence(self, organisation: str) -> ClayIntelligence:
+    async def get_intelligence(self, organisation: str) -> ClayIntelligence:
         return ClayIntelligence(
             organisation=organisation,
             company_profile=(
@@ -79,8 +78,8 @@ class ClayRestAdapter(ClayAdapter):
                 return fields[key]
         return None
 
-    def get_intelligence(self, organisation: str) -> ClayIntelligence:
-        row = asyncio.run(self.client.get_by_domain(self.table_id, organisation))
+    async def get_intelligence(self, organisation: str) -> ClayIntelligence:
+        row = await self.client.get_by_domain(self.table_id, organisation)
         if not row:
             return ClayIntelligence(
                 organisation=organisation,
