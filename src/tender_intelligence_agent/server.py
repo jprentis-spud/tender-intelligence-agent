@@ -79,15 +79,47 @@ def analyse_tender(tender_package: dict | None = None, cleaned_tender_text: str 
 
 
 @mcp.tool()
-async def get_clay_intelligence(organisation: str) -> dict:
-    """Step 3: Fetch buyer intelligence from Clay for the issuing organisation.
+async def sync_and_get_intelligence(
+    buyer_name: str,
+    buyer_domain: str,
+    tender_analysis: dict,
+) -> dict:
+    """Step 3: Sync buyer/tender to Clay pipeline, then fetch buyer intelligence.
 
-    Call this after analysis to enrich the picture with buyer context.
-    Share the most relevant signals (leadership changes, strategic direction,
-    competitive landscape) and ask whether the user wants to run bid qualification.
+    Call this after analysis. Requires the buyer name, buyer domain, and the
+    tender_analysis dict from step 2. This tool:
+      1. First upserts the Buyer row and creates a Tender row in Clay so the
+         opportunity is tracked in the pipeline immediately.
+      2. Then fetches buyer intelligence (strategic signals, leadership changes,
+         competitive landscape) to enrich qualification.
+
+    Present the most relevant buyer signals conversationally, confirm the
+    tender was saved to Clay, then ask the user if they want to qualify the bid.
     """
-    intelligence = await clay_adapter.get_intelligence(organisation)
-    return intelligence.model_dump()
+    result: dict = {}
+
+    # 1. Sync buyer + tender to Clay pipeline tables first.
+    if settings.clay_api_key and settings.clay_buyer_table_id and settings.clay_tender_table_id:
+        analysis_obj = TenderAnalysis.model_validate(tender_analysis)
+        sync = ClayPipelineSync(
+            ClaySyncConfig(
+                api_key=settings.clay_api_key,
+                base_url=settings.clay_base_url,
+                buyer_table_id=settings.clay_buyer_table_id,
+                tender_table_id=settings.clay_tender_table_id,
+            )
+        )
+        result["sync"] = sync.upsert_buyer_and_create_tender(
+            buyer_name=buyer_name,
+            buyer_domain=buyer_domain,
+            tender_analysis=analysis_obj.model_dump(),
+        )
+
+    # 2. Then fetch buyer intelligence.
+    intelligence = await clay_adapter.get_intelligence(buyer_domain)
+    result["intelligence"] = intelligence.model_dump()
+
+    return result
 
 
 @mcp.tool()
@@ -96,7 +128,7 @@ def qualify_bid(tender_analysis: dict, clay_intelligence: dict) -> dict:
 
     Produces a Bid / No Bid / Conditional recommendation with a transparent
     scoring breakdown. Present the recommendation and key factors, then ask
-    if the user wants a full executive briefing or to sync the tender to Clay.
+    if the user wants a full executive briefing.
     """
     try:
         analysis = TenderAnalysis.model_validate(tender_analysis)
@@ -121,37 +153,6 @@ def generate_briefing(tender_analysis: dict, clay_intelligence: dict, qualificat
 
     briefing = build_briefing(analysis, clay, qualified)
     return briefing.model_dump()
-
-
-@mcp.tool()
-def sync_tender_to_clay(buyer_name: str, buyer_domain: str, tender_analysis: dict) -> dict:
-    """Step 6: Save the buyer and tender to Clay CRM tables.
-
-    IMPORTANT: Always offer to call this after qualification or briefing.
-    This upserts the Buyer row (by domain) and creates a Tender row in Clay
-    so the opportunity is tracked in the pipeline. Ask the user for the
-    buyer_name and buyer_domain if not already known.
-    """
-    if not settings.clay_api_key or not settings.clay_buyer_table_id or not settings.clay_tender_table_id:
-        raise ValueError(
-            "CLAY_API_KEY, CLAY_BUYER_TABLE_ID and CLAY_TENDER_TABLE_ID are required for sync_tender_to_clay."
-        )
-
-    analysis = TenderAnalysis.model_validate(tender_analysis)
-    sync = ClayPipelineSync(
-        ClaySyncConfig(
-            api_key=settings.clay_api_key,
-            base_url=settings.clay_base_url,
-            buyer_table_id=settings.clay_buyer_table_id,
-            tender_table_id=settings.clay_tender_table_id,
-        )
-    )
-
-    return sync.upsert_buyer_and_create_tender(
-        buyer_name=buyer_name,
-        buyer_domain=buyer_domain,
-        tender_analysis=analysis.model_dump(),
-    )
 
 
 def run() -> None:
