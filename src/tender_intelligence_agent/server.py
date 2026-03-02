@@ -20,7 +20,7 @@ from tender_intelligence_agent.services.clay_pipeline_sync import ClayPipelineSy
 from tender_intelligence_agent.services.openai_tender_analysis import TenderAnalyser
 from tender_intelligence_agent.services.qualification import qualify_bid as compute_qualification
 
-mcp = FastMCP("tender-intelligence-agent")
+mcp = FastMCP("tender-intelligence-agent", host=settings.host, port=settings.port)
 
 
 def _build_clay_adapter() -> ClayAdapter:
@@ -132,11 +132,7 @@ def run() -> None:
       - "sse"   (default) — HTTP+SSE for remote deployment (Railway, etc.)
       - "stdio" — local stdio for ChatGPT Apps / desktop clients
     """
-    mcp.run(
-        transport=settings.transport,
-        host=settings.host,
-        port=settings.port,
-    )
+    mcp.run(transport=settings.transport)
 
 
 if __name__ == "__main__":
