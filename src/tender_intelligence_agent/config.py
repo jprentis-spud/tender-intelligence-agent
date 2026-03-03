@@ -19,10 +19,14 @@ class Settings:
     clay_adapter_mode: str = os.getenv("CLAY_ADAPTER_MODE", "mock")
     clay_api_key: str | None = os.getenv("CLAY_API_KEY")
     clay_base_url: str = os.getenv("CLAY_BASE_URL", "https://api.clay.com")
-    clay_company_table_id: str | None = os.getenv("CLAY_COMPANY_TABLE_ID")
     clay_buyer_table_id: str | None = os.getenv("CLAY_BUYER_TABLE_ID")
     clay_tender_table_id: str | None = os.getenv("CLAY_TENDER_TABLE_ID")
     max_chunk_chars: int = int(os.getenv("MAX_CHUNK_CHARS", "12000"))
+
+    # Server / transport settings
+    transport: str = os.getenv("MCP_TRANSPORT", "sse")
+    host: str = os.getenv("HOST", "0.0.0.0")
+    port: int = int(os.getenv("PORT", "8000"))
 
 
 settings = Settings()

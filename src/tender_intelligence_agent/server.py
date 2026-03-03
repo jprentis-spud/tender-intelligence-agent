@@ -7,41 +7,30 @@ from pydantic import ValidationError
 
 from tender_intelligence_agent.config import settings
 from tender_intelligence_agent.models import (
-    Briefing,
     ClayIntelligence,
     QualificationResult,
     TenderAnalysis,
     TenderPackage,
-    WorkflowResult,
-    StyleConfig,
 )
 from tender_intelligence_agent.services.briefing import generate_briefing as build_briefing
 from tender_intelligence_agent.services.clay_adapter import ClayAdapter, ClayRestAdapter, MockClayAdapter
 from tender_intelligence_agent.services.clay_client import ClayComClient
-from tender_intelligence_agent.services.clay_pipeline_sync import ClayPipelineSync, ClaySyncConfig
 from tender_intelligence_agent.services.document_ingestion import build_tender_package
+from tender_intelligence_agent.services.clay_pipeline_sync import ClayPipelineSync, ClaySyncConfig
 from tender_intelligence_agent.services.openai_tender_analysis import TenderAnalyser
 from tender_intelligence_agent.services.qualification import qualify_bid as compute_qualification
-from tender_intelligence_agent.services.workflow_orchestrator import WorkflowDependencies, run_tender_workflow as orchestrate
-from tender_intelligence_agent.services.style_controller import (
-    FINAL_BRIEFING_PROMPT,
-    INTERMEDIATE_ANALYSE_PROMPT,
-    INTERMEDIATE_QUALIFY_PROMPT,
-    build_intermediate_status,
-    render_response,
-)
 
-mcp = FastMCP("tender-intelligence-agent")
+mcp = FastMCP("tender-intelligence-agent", host=settings.host, port=settings.port)
 
 
 def _build_clay_adapter() -> ClayAdapter:
     if settings.clay_adapter_mode == "rest":
-        if not settings.clay_api_key or not settings.clay_company_table_id:
+        if not settings.clay_api_key or not settings.clay_buyer_table_id:
             raise RuntimeError(
-                "CLAY_ADAPTER_MODE=rest requires CLAY_API_KEY and CLAY_COMPANY_TABLE_ID to be set."
+                "CLAY_ADAPTER_MODE=rest requires CLAY_API_KEY and CLAY_BUYER_TABLE_ID to be set."
             )
         client = ClayComClient(api_key=settings.clay_api_key, base_url=settings.clay_base_url)
-        return ClayRestAdapter(client=client, table_id=settings.clay_company_table_id)
+        return ClayRestAdapter(client=client, table_id=settings.clay_buyer_table_id)
 
     # Future extension point for additional Clay providers.
     return MockClayAdapter()
@@ -56,16 +45,25 @@ def ingest_tender_documents(
     file_path: str | None = None,
     text: str | None = None,
 ) -> dict:
-    """Ingest one-or-many tender docs into a structured TenderPackage."""
+    """Step 1: Ingest tender documents into a structured package.
+
+    Call this first when the user provides tender text or file paths.
+    After calling, briefly confirm what was ingested (document count, primary doc type)
+    and ask the user if they'd like to proceed with analysis.
+    Do NOT summarise the full contents — just confirm receipt.
+    """
     package = build_tender_package(file_paths=file_paths, file_path=file_path, text=text)
     return package.model_dump()
 
 
 @mcp.tool()
-def analyse_tender(tender_package: dict | None = None, cleaned_tender_text: str | None = None, style_config: dict | None = None) -> dict:
-    """Analyse tender package using primary document plus supporting context.
+def analyse_tender(tender_package: dict | None = None, cleaned_tender_text: str | None = None) -> dict:
+    """Step 2: Analyse the tender package to extract requirements, risks, and evaluation criteria.
 
-    Backward compatibility: cleaned_tender_text is wrapped into a single-document package.
+    Call this after ingestion. Present the key findings conversationally — highlight
+    the most important requirements and risks, then ask the user if they want to
+    pull buyer intelligence from Clay before qualifying the bid.
+    Do NOT dump the entire analysis at once.
     """
     analyser = TenderAnalyser()
 
@@ -77,152 +75,94 @@ def analyse_tender(tender_package: dict | None = None, cleaned_tender_text: str 
         raise ValueError("Provide tender_package or cleaned_tender_text.")
 
     analysis = analyser.analyse_package(package)
-    style = StyleConfig.model_validate(style_config or {"mode": "INTERMEDIATE", "audience": "BID_MANAGER"})
-    status = build_intermediate_status(
-        "analyse_tender",
-        {"requirements": len(analysis.requirements), "risks": len(analysis.risks), "complexity": analysis.complexity},
-        style,
-    )
-    return {**analysis.model_dump(), "agent_response": status, "prompt_template": INTERMEDIATE_ANALYSE_PROMPT if style.mode == "INTERMEDIATE" else FINAL_BRIEFING_PROMPT}
+    return analysis.model_dump()
 
 
 @mcp.tool()
-def get_clay_intelligence(organisation: str) -> dict:
-    """Get buyer intelligence from Clay adapter (mock by default; REST optional)."""
-    intelligence = clay_adapter.get_intelligence(organisation)
-    return intelligence.model_dump()
-
-
-@mcp.tool()
-def qualify_bid(
+async def sync_and_get_intelligence(
+    buyer_name: str,
+    buyer_domain: str,
     tender_analysis: dict,
-    clay_intelligence: dict,
-    us_context: dict | None = None,
-    competitor_context: dict | None = None,
-    style_config: dict | None = None,
 ) -> dict:
-    """Combine tender analysis and Clay intelligence into transparent bid qualification."""
+    """Step 3: Sync buyer/tender to Clay pipeline, then fetch buyer intelligence.
+
+    Call this after analysis. Requires the buyer name, buyer domain, and the
+    tender_analysis dict from step 2. This tool:
+      1. First upserts the Buyer row and creates a Tender row in Clay so the
+         opportunity is tracked in the pipeline immediately.
+      2. Then fetches buyer intelligence (strategic signals, leadership changes,
+         competitive landscape) to enrich qualification.
+
+    Present the most relevant buyer signals conversationally, confirm the
+    tender was saved to Clay, then ask the user if they want to qualify the bid.
+    """
+    result: dict = {}
+
+    # 1. Sync buyer + tender to Clay pipeline tables first.
+    if settings.clay_api_key and settings.clay_buyer_table_id and settings.clay_tender_table_id:
+        analysis_obj = TenderAnalysis.model_validate(tender_analysis)
+        sync = ClayPipelineSync(
+            ClaySyncConfig(
+                api_key=settings.clay_api_key,
+                base_url=settings.clay_base_url,
+                buyer_table_id=settings.clay_buyer_table_id,
+                tender_table_id=settings.clay_tender_table_id,
+            )
+        )
+        result["sync"] = sync.upsert_buyer_and_create_tender(
+            buyer_name=buyer_name,
+            buyer_domain=buyer_domain,
+            tender_analysis=analysis_obj.model_dump(),
+        )
+
+    # 2. Then fetch buyer intelligence.
+    intelligence = await clay_adapter.get_intelligence(buyer_domain)
+    result["intelligence"] = intelligence.model_dump()
+
+    return result
+
+
+@mcp.tool()
+def qualify_bid(tender_analysis: dict, clay_intelligence: dict) -> dict:
+    """Step 4: Score the bid opportunity using tender analysis and buyer intelligence.
+
+    Produces a Bid / No Bid / Conditional recommendation with a transparent
+    scoring breakdown. Present the recommendation and key factors, then ask
+    if the user wants a full executive briefing.
+    """
     try:
         analysis = TenderAnalysis.model_validate(tender_analysis)
         clay = ClayIntelligence.model_validate(clay_intelligence)
     except ValidationError as exc:
         raise ValueError(f"Invalid input schema for qualify_bid: {exc}") from exc
 
-    # Optional context is currently accepted but not scored to preserve deterministic output.
-    _ = us_context, competitor_context
-
     qualification: QualificationResult = compute_qualification(analysis, clay)
-    style = StyleConfig.model_validate(style_config or {"mode": "INTERMEDIATE", "audience": "BID_MANAGER"})
-    message = build_intermediate_status(
-        "qualify_bid",
-        {"recommendation": qualification.recommendation, "win_probability": qualification.win_probability, "risk_level": qualification.risk_level},
-        style,
-    )
-    return {**qualification.model_dump(), "agent_response": message, "prompt_template": INTERMEDIATE_QUALIFY_PROMPT if style.mode == "INTERMEDIATE" else FINAL_BRIEFING_PROMPT}
+    return qualification.model_dump()
 
 
 @mcp.tool()
-def generate_briefing(
-    qualification: dict,
-    tender_analysis: dict | None = None,
-    clay_intelligence: dict | None = None,
-    style_config: dict | None = None,
-) -> dict:
-    """Generate executive tender briefing.
+def generate_briefing(tender_analysis: dict, clay_intelligence: dict, qualification: dict) -> dict:
+    """Step 5: Generate an executive briefing summarising the tender opportunity.
 
-    Preferred minimal input is `qualification`; analysis/clay are optional enhancements.
+    Call this when the user wants the full briefing document with recommendations
+    and immediate actions for decision stakeholders.
     """
+    analysis = TenderAnalysis.model_validate(tender_analysis)
+    clay = ClayIntelligence.model_validate(clay_intelligence)
     qualified = QualificationResult.model_validate(qualification)
 
-    if tender_analysis and clay_intelligence:
-        analysis = TenderAnalysis.model_validate(tender_analysis)
-        clay = ClayIntelligence.model_validate(clay_intelligence)
-        briefing = build_briefing(analysis, clay, qualified)
-    else:
-        briefing = Briefing(
-            title="Tender Qualification Briefing",
-            summary=qualified.rationale,
-            recommendation=qualified.recommendation,
-            win_probability=qualified.win_probability,
-            top_considerations=qualified.key_risks[:3],
-            immediate_actions=qualified.required_resources[:3],
-        )
-
-    style = StyleConfig.model_validate(style_config or {"mode": "FINAL", "audience": "BID_MANAGER"})
-    detailed = (
-        f"Executive Summary\n{briefing.summary}\n\n"
-        f"Recommendation\n{qualified.recommendation} (win_probability={qualified.win_probability:.2f}, "
-        f"risk_level={qualified.risk_level}, strategic_value={qualified.strategic_value}).\n\n"
-        f"Win Themes\n- Align response to evaluation criteria\n- Emphasize delivery credibility\n\n"
-        f"Key Risks\n- " + "\n- ".join(qualified.key_risks[:5] or ["No critical risks provided"]) + "\n\n"
-        f"Next Actions\n- " + "\n- ".join(briefing.immediate_actions[:5] or ["Confirm bid governance"])
-    )
-    rendered = render_response(detailed if style.mode == "FINAL" else briefing.summary, style)
-    return {**briefing.model_dump(), "agent_response": rendered, "prompt_template": FINAL_BRIEFING_PROMPT if style.mode == "FINAL" else INTERMEDIATE_QUALIFY_PROMPT}
-
-
-@mcp.tool()
-def sync_tender_to_clay(buyer_name: str, buyer_domain: str, tender_analysis: dict) -> dict:
-    """Upsert Buyer by domain, then create Tender row linked via buyer_domain."""
-    if not settings.clay_api_key or not settings.clay_buyer_table_id or not settings.clay_tender_table_id:
-        raise ValueError(
-            "CLAY_API_KEY, CLAY_BUYER_TABLE_ID and CLAY_TENDER_TABLE_ID are required for sync_tender_to_clay."
-        )
-
-    analysis = TenderAnalysis.model_validate(tender_analysis)
-    sync = ClayPipelineSync(
-        ClaySyncConfig(
-            api_key=settings.clay_api_key,
-            base_url=settings.clay_base_url,
-            buyer_table_id=settings.clay_buyer_table_id,
-            tender_table_id=settings.clay_tender_table_id,
-        )
-    )
-
-    return sync.upsert_buyer_and_create_tender(
-        buyer_name=buyer_name,
-        buyer_domain=buyer_domain,
-        tender_analysis=analysis.model_dump(),
-    )
-
-
-@mcp.tool()
-def run_tender_workflow(
-    files: list[str] | None = None,
-    text: str | None = None,
-    buyer_name: str | None = None,
-    buyer_domain: str | None = None,
-    us_context: dict | None = None,
-    competitor_context: dict | None = None,
-    correlation_id: str | None = None,
-) -> dict:
-    """Deterministic end-to-end tender workflow orchestrator."""
-
-    deps = WorkflowDependencies(
-        ingest_tender_documents=ingest_tender_documents,
-        analyse_tender=analyse_tender,
-        sync_tender_to_clay=sync_tender_to_clay,
-        get_clay_intelligence=get_clay_intelligence,
-        qualify_bid=qualify_bid,
-        generate_briefing=generate_briefing,
-    )
-
-    workflow: WorkflowResult = orchestrate(
-        deps=deps,
-        files=files,
-        text=text,
-        buyer_name=buyer_name,
-        buyer_domain=buyer_domain,
-        us_context=us_context,
-        competitor_context=competitor_context,
-        correlation_id=correlation_id,
-    )
-    return workflow.model_dump()
+    briefing = build_briefing(analysis, clay, qualified)
+    return briefing.model_dump()
 
 
 def run() -> None:
-    """Run the MCP server with stdio transport for ChatGPT Apps integration."""
-    mcp.run(transport="stdio")
+    """Run the MCP server.
+
+    Transport is controlled by MCP_TRANSPORT env var:
+      - "sse"   (default) — HTTP+SSE for remote deployment (Railway, etc.)
+      - "stdio" — local stdio for ChatGPT Apps / desktop clients
+    """
+    mcp.run(transport=settings.transport)
 
 
 if __name__ == "__main__":
