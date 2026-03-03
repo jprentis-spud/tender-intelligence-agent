@@ -27,6 +27,7 @@ from tender_intelligence_agent.services.clay_pipeline_sync import ClayPipelineSy
 from tender_intelligence_agent.services.document_ingestion import build_tender_package
 from tender_intelligence_agent.services.openai_tender_analysis import TenderAnalyser
 from tender_intelligence_agent.services.qualification import qualify_bid as compute_qualification
+from tender_intelligence_agent.services.sculpt_hack_proxy import SculptHackProxyClient, SculptHackProxyConfig
 from tender_intelligence_agent.services.style_controller import (
     FINAL_BRIEFING_PROMPT,
     INTERMEDIATE_ANALYSE_PROMPT,
@@ -67,6 +68,21 @@ def _build_clay_adapter() -> ClayAdapter:
 clay_adapter = _build_clay_adapter()
 
 
+def _build_sculpt_hack_proxy() -> SculptHackProxyClient:
+    if not settings.sculpt_hack_api_key:
+        raise ValueError("SCULPT_HACK_API_KEY (or CLAY_API_KEY) is required for Sculpt_Hack proxy tools.")
+    return SculptHackProxyClient(
+        SculptHackProxyConfig(
+            base_url=settings.clay_mcp_base_url,
+            api_key=settings.sculpt_hack_api_key,
+            auth_header=settings.sculpt_hack_auth_header,
+            auth_scheme=settings.sculpt_hack_auth_scheme,
+            timeout_seconds=settings.sculpt_hack_timeout_seconds,
+            retries=settings.sculpt_hack_retries,
+        )
+    )
+
+
 def _normalize_domain(value: str | None) -> str:
     normalized = ClayPipelineSync.normalize_domain(value)
     return normalized or ""
@@ -101,6 +117,32 @@ def _extract_first(data: Any, keys: tuple[str, ...]) -> Any:
 
 
 @mcp.tool()
+def sculpt_find_and_enrich_company(company_identifier: str, company_data_points: list[str] | None = None) -> dict:
+    """Proxy to Sculpt_Hack find-and-enrich-company."""
+    client = _build_sculpt_hack_proxy()
+    args: dict[str, Any] = {"companyIdentifier": company_identifier}
+    if company_data_points:
+        args["companyDataPoints"] = company_data_points
+    return client.call_tool("find-and-enrich-company", args)
+
+
+@mcp.tool()
+def sculpt_find_and_enrich_contacts_at_company(
+    company_identifier: str,
+    contact_filters: dict | None = None,
+    data_points: dict | None = None,
+) -> dict:
+    """Proxy to Sculpt_Hack find-and-enrich-contacts-at-company."""
+    client = _build_sculpt_hack_proxy()
+    args: dict[str, Any] = {"companyIdentifier": company_identifier}
+    if isinstance(contact_filters, dict) and contact_filters:
+        args["contactFilters"] = contact_filters
+    if isinstance(data_points, dict) and data_points:
+        args["dataPoints"] = data_points
+    return client.call_tool("find-and-enrich-contacts-at-company", args)
+
+
+@mcp.tool()
 def validate_buyer_identity(
     buyer_name: str | None = None,
     buyer_domain: str | None = None,
@@ -109,9 +151,22 @@ def validate_buyer_identity(
     """Validate and canonicalize buyer identity using Sculpt_Hack enrichment payloads."""
     payload = buyer_enrichment or {}
 
-    extracted_name = _extract_first(payload, ("company_name", "organisation", "organization", "name"))
+    candidate_identifier = _normalize_domain(buyer_domain)
+    if not candidate_identifier:
+        candidate_identifier = _normalize_domain(str(_extract_first(payload, ("domain", "company_domain", "website", "url")) or ""))
+
+    remote_payload: dict[str, Any] = {}
+    if candidate_identifier:
+        client = _build_sculpt_hack_proxy()
+        response = client.call_tool("find-and-enrich-company", {"companyIdentifier": candidate_identifier})
+        if isinstance(response, dict):
+            remote_payload = response
+
+    merged_payload = {**remote_payload, **payload}
+
+    extracted_name = _extract_first(merged_payload, ("company_name", "organisation", "organization", "name"))
     extracted_domain = _extract_first(
-        payload,
+        merged_payload,
         ("domain", "company_domain", "website", "company_website", "companyWebsite", "url"),
     )
 
@@ -120,16 +175,16 @@ def validate_buyer_identity(
 
     if not canonical_name:
         raise ValueError(
-            "buyer_name is required. Provide it directly or include it in Sculpt_Hack find-and-enrich-company payload."
+            "buyer_name is required. Provide it directly or ensure Sculpt_Hack returns company_name."
         )
     if not canonical_domain:
         raise ValueError(
             "buyer_domain is required. Provide it directly or include it in Sculpt_Hack find-and-enrich-company payload."
         )
 
-    company_profile = str(_extract_first(payload, ("company_profile", "description", "firmographics_summary")) or "")
-    strategic_signals = _as_string_list(_extract_first(payload, ("strategic_signals", "signals")))
-    relationship_signals = _as_string_list(_extract_first(payload, ("relationships", "relationship_signals")))
+    company_profile = str(_extract_first(merged_payload, ("company_profile", "description", "firmographics_summary")) or "")
+    strategic_signals = _as_string_list(_extract_first(merged_payload, ("strategic_signals", "signals")))
+    relationship_signals = _as_string_list(_extract_first(merged_payload, ("relationships", "relationship_signals")))
 
     return {
         "buyer_name": canonical_name,
@@ -137,7 +192,7 @@ def validate_buyer_identity(
         "company_profile": company_profile,
         "strategic_signals": strategic_signals,
         "relationship_signals": relationship_signals,
-        "source": "sculpt_hack" if buyer_enrichment else "manual",
+        "source": "sculpt_hack",
     }
 
 
@@ -276,7 +331,17 @@ def competitor_review(buyer_domain: str, competitor_context: dict | None = None)
     if not normalized_buyer_domain:
         raise ValueError("buyer_domain is required")
 
-    payload = competitor_context or {}
+    client = _build_sculpt_hack_proxy()
+    remote_payload = client.call_tool(
+        "find-and-enrich-company",
+        {
+            "companyIdentifier": normalized_buyer_domain,
+            "companyDataPoints": ["Company Competitors"],
+        },
+    )
+    payload = remote_payload if isinstance(remote_payload, dict) else {}
+    if isinstance(competitor_context, dict):
+        payload = {**payload, **competitor_context}
     raw_competitors = _extract_first(payload, ("competitors", "company_competitors", "Company Competitors")) or []
 
     competitors: list[dict[str, str]] = []
@@ -303,7 +368,7 @@ def competitor_review(buyer_domain: str, competitor_context: dict | None = None)
         "competitors": competitors,
         "competitor_domains": competitor_domains,
         "competitive_context": competitive_context,
-        "source": "sculpt_hack" if competitor_context else "empty",
+        "source": "sculpt_hack",
     }
 
 
@@ -445,7 +510,6 @@ def run_tender_workflow(
         ingest_tender_documents=ingest_tender_documents,
         validate_buyer_identity=validate_buyer_identity,
         analyse_tender=analyse_tender,
-        sync_tender_to_clay=sync_tender_to_clay,
         competitor_review=competitor_review,
         capability_assessment=capability_assessment,
         qualify_bid=qualify_bid,

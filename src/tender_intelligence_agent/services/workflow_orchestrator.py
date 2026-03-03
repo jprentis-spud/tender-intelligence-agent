@@ -27,7 +27,6 @@ class WorkflowDependencies:
     ingest_tender_documents: Callable[..., dict]
     validate_buyer_identity: Callable[..., dict]
     analyse_tender: Callable[..., dict]
-    sync_tender_to_clay: Callable[..., dict]
     competitor_review: Callable[..., dict]
     capability_assessment: Callable[..., dict]
     qualify_bid: Callable[..., dict]
@@ -203,15 +202,6 @@ def run_tender_workflow(
         analysis = validate_tender_analysis(analysis_payload)
         _emit(log_fn, corr_id, step, "completed", {"requirements": len(analysis.requirements)})
 
-        step = "sync_tender_to_clay"
-        _emit(log_fn, corr_id, step, "started")
-        clay_sync = deps.sync_tender_to_clay(
-            buyer_name=canonical_name,
-            buyer_domain=canonical_domain,
-            tender_analysis=analysis.model_dump(),
-        )
-        _emit(log_fn, corr_id, step, "completed", {"keys": sorted(clay_sync.keys()) if isinstance(clay_sync, dict) else []})
-
         step = "competitor_review"
         _emit(log_fn, corr_id, step, "started", {"buyer_domain": canonical_domain})
         competitor_review = deps.competitor_review(
@@ -277,7 +267,7 @@ def run_tender_workflow(
             buyer_identity=buyer_identity if isinstance(buyer_identity, dict) else {},
             tender_package=package,
             tender_analysis=analysis,
-            clay_sync=clay_sync if isinstance(clay_sync, dict) else {},
+            clay_sync={},
             competitor_review=competitor_review if isinstance(competitor_review, dict) else {},
             capability_assessment=capability_assessment if isinstance(capability_assessment, dict) else {},
             clay_intelligence=clay,

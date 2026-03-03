@@ -35,10 +35,6 @@ def test_orchestrator_success_order_and_outputs() -> None:
             "document_contributions": {},
         }
 
-    def sync_tender_to_clay(**_: object) -> dict:
-        calls.append("sync")
-        return {"buyer": {"id": "b1"}, "tender": {"id": "t1"}}
-
     def competitor_review(**_: object) -> dict:
         calls.append("competitor")
         return {
@@ -91,7 +87,6 @@ def test_orchestrator_success_order_and_outputs() -> None:
             ingest_tender_documents=ingest_tender_documents,
             validate_buyer_identity=validate_buyer_identity,
             analyse_tender=analyse_tender,
-            sync_tender_to_clay=sync_tender_to_clay,
             competitor_review=competitor_review,
             capability_assessment=capability_assessment,
             qualify_bid=qualify_bid,
@@ -102,7 +97,7 @@ def test_orchestrator_success_order_and_outputs() -> None:
     )
 
     assert result.ok is True
-    assert calls == ["ingest", "validate", "analyse", "sync", "competitor", "capability", "qualify", "briefing"]
+    assert calls == ["ingest", "validate", "analyse", "competitor", "capability", "qualify", "briefing"]
 
 
 def test_orchestrator_fails_fast_before_sync_when_buyer_missing() -> None:
@@ -142,7 +137,6 @@ def test_orchestrator_fails_fast_before_sync_when_buyer_missing() -> None:
             ingest_tender_documents=ingest_tender_documents,
             validate_buyer_identity=validate_buyer_identity,
             analyse_tender=analyse_tender,
-            sync_tender_to_clay=never_called,
             competitor_review=never_called,
             capability_assessment=never_called,
             qualify_bid=never_called,
