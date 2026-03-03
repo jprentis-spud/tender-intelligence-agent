@@ -2,11 +2,11 @@
 
 from __future__ import annotations
 
-import asyncio
 from abc import ABC, abstractmethod
 from typing import Any
 
 from tender_intelligence_agent.models import ClayIntelligence
+from tender_intelligence_agent.services.async_bridge import run_coro
 from tender_intelligence_agent.services.clay_client import ClayComClient
 
 
@@ -80,7 +80,7 @@ class ClayRestAdapter(ClayAdapter):
         return None
 
     def get_intelligence(self, organisation: str) -> ClayIntelligence:
-        row = asyncio.run(self.client.get_by_domain(self.table_id, organisation))
+        row = run_coro(lambda: self.client.get_by_domain(self.table_id, organisation))
         if not row:
             return ClayIntelligence(
                 organisation=organisation,
