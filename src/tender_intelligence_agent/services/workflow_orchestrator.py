@@ -226,7 +226,7 @@ def run_tender_workflow(
         )
         _emit(log_fn, corr_id, step, "completed", {"source": capability_assessment.get("source", "unknown")})
 
-        step = "compose_clay_intelligence"
+        step = "qualify_bid"
         _emit(log_fn, corr_id, step, "started")
         clay = compose_clay_intelligence(
             buyer_identity=buyer_identity,
@@ -234,10 +234,6 @@ def run_tender_workflow(
             capability_assessment=capability_assessment if isinstance(capability_assessment, dict) else {},
         )
         clay = validate_clay_intelligence(clay.model_dump())
-        _emit(log_fn, corr_id, step, "completed", {"signals": len(clay.strategic_signals)})
-
-        step = "qualify_bid"
-        _emit(log_fn, corr_id, step, "started")
         qualification_payload = deps.qualify_bid(
             tender_analysis=analysis.model_dump(),
             clay_intelligence=clay.model_dump(),
@@ -267,7 +263,6 @@ def run_tender_workflow(
             buyer_identity=buyer_identity if isinstance(buyer_identity, dict) else {},
             tender_package=package,
             tender_analysis=analysis,
-            clay_sync={},
             competitor_review=competitor_review if isinstance(competitor_review, dict) else {},
             capability_assessment=capability_assessment if isinstance(capability_assessment, dict) else {},
             clay_intelligence=clay,
