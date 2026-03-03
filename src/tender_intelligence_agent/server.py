@@ -156,9 +156,13 @@ def ingest_tender_documents(
 def analyse_tender(
     tender_package: dict | None = None,
     cleaned_tender_text: str | None = None,
+    buyer_domain: str | None = None,
+    competitor_context: dict | None = None,
+    us_context: dict | None = None,
+    us_table_path: str | None = None,
     style_config: dict | None = None,
 ) -> dict:
-    """Analyse tender package using primary document plus supporting context."""
+    """Analyse tender package and optionally include capability check output."""
     analyser = TenderAnalyser()
 
     if tender_package:
@@ -179,8 +183,28 @@ def analyse_tender(
         },
         style,
     )
+
+    capability_check: dict[str, Any] = {"status": "skipped", "reason": "buyer_domain not provided"}
+    if buyer_domain and str(buyer_domain).strip():
+        reviewed_competitors = competitor_review(
+            buyer_domain=buyer_domain,
+            competitor_context=competitor_context,
+        )
+        assessed_capability = capability_assessment(
+            buyer_domain=buyer_domain,
+            competitor_review=reviewed_competitors,
+            us_context=us_context,
+            us_table_path=us_table_path,
+        )
+        capability_check = {
+            "status": "completed",
+            "competitor_review": reviewed_competitors,
+            "capability_assessment": assessed_capability,
+        }
+
     return {
         **analysis.model_dump(),
+        "capability_check": capability_check,
         "agent_response": status,
         "prompt_template": INTERMEDIATE_ANALYSE_PROMPT if style.mode == "INTERMEDIATE" else FINAL_BRIEFING_PROMPT,
     }
