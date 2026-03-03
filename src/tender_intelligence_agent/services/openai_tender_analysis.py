@@ -3,8 +3,11 @@
 from __future__ import annotations
 
 import json
+import logging
 
-from openai import OpenAI
+from openai import OpenAI, OpenAIError
+
+logger = logging.getLogger(__name__)
 
 from tender_intelligence_agent.config import settings
 from tender_intelligence_agent.models import TenderAnalysis, TenderDocument, TenderPackage
@@ -59,15 +62,19 @@ class TenderAnalyser:
         self.client = OpenAI(api_key=settings.openai_api_key)
 
     def _call_json(self, system_prompt: str, user_content: str) -> dict:
-        response = self.client.chat.completions.create(
-            model=settings.openai_model,
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_content},
-            ],
-            temperature=0,
-        )
-        return json.loads(response.choices[0].message.content.strip())
+        try:
+            response = self.client.chat.completions.create(
+                model=settings.openai_model,
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_content},
+                ],
+                temperature=0,
+            )
+            return json.loads(response.choices[0].message.content.strip())
+        except OpenAIError as exc:
+            logger.error("OpenAI API error: model=%s error=%s", settings.openai_model, exc)
+            raise
 
     def _analyse_primary_document(self, primary_doc: TenderDocument) -> TenderAnalysis:
         chunks = chunk_text(primary_doc.text, settings.max_chunk_chars)
