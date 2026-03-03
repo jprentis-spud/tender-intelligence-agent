@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from mcp.server.fastmcp import FastMCP
 from pydantic import ValidationError
+from starlette.requests import Request
+from starlette.responses import JSONResponse
 
 from tender_intelligence_agent.config import settings
 from tender_intelligence_agent.models import (
@@ -35,6 +37,14 @@ from tender_intelligence_agent.services.workflow_orchestrator import (
 )
 
 mcp = FastMCP("tender-intelligence-agent", host=settings.host, port=settings.port)
+
+
+async def _health(request: Request) -> JSONResponse:
+    return JSONResponse({"status": "ok", "service": "tender-intelligence-agent"})
+
+
+mcp.custom_route("/", methods=["GET"])(_health)
+mcp.custom_route("/health", methods=["GET"])(_health)
 
 
 def _build_clay_adapter() -> ClayAdapter:
