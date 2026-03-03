@@ -7,14 +7,16 @@ Production-ready Python MCP server for an AI Tender Qualification Agent.
 This MCP server exposes tools for a ChatGPT App frontend to decide whether to bid on a tender:
 
 1. `ingest_tender_documents` — ingest a tender package (multi-doc) and return structured, typed documents.
-2. `validate_buyer_identity` — canonicalize buyer name/domain using Sculpt_Hack enrichment payloads (or direct inputs).
-3. `analyse_tender` — use OpenAI to extract requirements, criteria, risks, complexity, and delivery scope.
-4. `sync_tender_to_clay` — upsert Buyer by domain then create Tender row in Clay.
-5. `competitor_review` — normalize competitor context payloads into deterministic competitor structures.
-6. `capability_assessment` — merge US capability context (inline JSON or file) with buyer/competitor domains.
-7. `qualify_bid` — apply transparent scoring logic to produce Bid / No Bid / Conditional recommendation.
-8. `generate_briefing` — create an executive summary for decision makers.
-9. `run_tender_workflow` — deterministic orchestration across ingestion, buyer validation, analysis, Clay sync, competitor review, capability assessment, qualification, and briefing.
+2. `sculpt_find_and_enrich_company` — proxy call to Sculpt_Hack `find-and-enrich-company`.
+3. `sculpt_find_and_enrich_contacts_at_company` — proxy call to Sculpt_Hack `find-and-enrich-contacts-at-company`.
+4. `validate_buyer_identity` — canonicalize buyer name/domain using Sculpt_Hack enrichment payloads (or direct inputs).
+5. `analyse_tender` — use OpenAI to extract requirements, criteria, risks, complexity, and delivery scope.
+6. `sync_tender_to_clay` — upsert Buyer by domain then create Tender row in Clay.
+7. `competitor_review` — normalize competitor context payloads into deterministic competitor structures.
+8. `capability_assessment` — merge US capability context (inline JSON or file) with buyer/competitor domains.
+9. `qualify_bid` — apply transparent scoring logic to produce Bid / No Bid / Conditional recommendation.
+10. `generate_briefing` — create an executive summary for decision makers.
+11. `run_tender_workflow` — deterministic orchestration across ingestion, buyer validation, analysis, competitor review, capability assessment, qualification, and briefing.
 
 ---
 
@@ -253,7 +255,7 @@ Flow:
 }
 ```
 
-Execution order (fail-fast): ingest -> validate buyer identity -> analyse -> sync to clay -> competitor review -> capability assessment -> qualify -> briefing.
+Execution order (fail-fast): ingest -> validate buyer identity -> analyse -> competitor review -> capability assessment -> qualify -> briefing.
 
 ### `generate_briefing`
 
