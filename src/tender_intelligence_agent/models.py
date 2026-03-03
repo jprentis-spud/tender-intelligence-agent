@@ -90,7 +90,6 @@ class WorkflowResult(BaseModel):
     buyer_identity: dict[str, object] = Field(default_factory=dict)
     tender_package: TenderPackage | None = None
     tender_analysis: TenderAnalysis | None = None
-    clay_sync: dict[str, object] = Field(default_factory=dict)
     competitor_review: dict[str, object] = Field(default_factory=dict)
     capability_assessment: dict[str, object] = Field(default_factory=dict)
     clay_intelligence: ClayIntelligence | None = None
