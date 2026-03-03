@@ -13,6 +13,16 @@ def test_orchestrator_success_order_and_outputs() -> None:
             "primary_document_filename": "a.txt",
         }
 
+    def validate_buyer_identity(**_: object) -> dict:
+        calls.append("validate")
+        return {
+            "buyer_name": "Acme",
+            "buyer_domain": "acme.com",
+            "company_profile": "Profile",
+            "strategic_signals": [],
+            "relationship_signals": [],
+        }
+
     def analyse_tender(**_: object) -> dict:
         calls.append("analyse")
         return {
@@ -29,17 +39,27 @@ def test_orchestrator_success_order_and_outputs() -> None:
         calls.append("sync")
         return {"buyer": {"id": "b1"}, "tender": {"id": "t1"}}
 
-    def get_clay_intelligence(_: str) -> dict:
-        calls.append("clay")
+    def competitor_review(**_: object) -> dict:
+        calls.append("competitor")
         return {
-            "organisation": "Acme",
-            "company_profile": "Profile",
-            "strategic_signals": [],
-            "leadership_changes": [],
-            "market_activity": [],
-            "relationships": [],
-            "competitive_context": [],
-            "source": "mock",
+            "buyer_domain": "acme.com",
+            "competitors": [{"name": "OtherCo", "domain": "otherco.com"}],
+            "competitor_domains": ["otherco.com"],
+            "competitive_context": ["OtherCo active in buyer market."],
+            "source": "sculpt_hack",
+        }
+
+    def capability_assessment(**_: object) -> dict:
+        calls.append("capability")
+        return {
+            "buyer_domain": "acme.com",
+            "buyer_summary": "Strong delivery footprint.",
+            "buyer_capability": {},
+            "competitor_capabilities": [],
+            "relationship_signals": ["Existing exec relationship"],
+            "strategic_signals": ["Known framework alignment"],
+            "coverage_gaps": [],
+            "source": "us_context",
         }
 
     def qualify_bid(**_: object) -> dict:
@@ -69,9 +89,11 @@ def test_orchestrator_success_order_and_outputs() -> None:
     result = run_tender_workflow(
         deps=WorkflowDependencies(
             ingest_tender_documents=ingest_tender_documents,
+            validate_buyer_identity=validate_buyer_identity,
             analyse_tender=analyse_tender,
             sync_tender_to_clay=sync_tender_to_clay,
-            get_clay_intelligence=get_clay_intelligence,
+            competitor_review=competitor_review,
+            capability_assessment=capability_assessment,
             qualify_bid=qualify_bid,
             generate_briefing=generate_briefing,
         ),
@@ -80,7 +102,7 @@ def test_orchestrator_success_order_and_outputs() -> None:
     )
 
     assert result.ok is True
-    assert calls == ["ingest", "analyse", "sync", "clay", "qualify", "briefing"]
+    assert calls == ["ingest", "validate", "analyse", "sync", "competitor", "capability", "qualify", "briefing"]
 
 
 def test_orchestrator_fails_fast_before_sync_when_buyer_missing() -> None:
@@ -107,6 +129,10 @@ def test_orchestrator_fails_fast_before_sync_when_buyer_missing() -> None:
             "document_contributions": {},
         }
 
+    def validate_buyer_identity(**_: object) -> dict:
+        calls.append("validate")
+        return {"buyer_name": "", "buyer_domain": "acme.com"}
+
     def never_called(**_: object) -> dict:
         calls.append("later")
         return {}
@@ -114,17 +140,19 @@ def test_orchestrator_fails_fast_before_sync_when_buyer_missing() -> None:
     result = run_tender_workflow(
         deps=WorkflowDependencies(
             ingest_tender_documents=ingest_tender_documents,
+            validate_buyer_identity=validate_buyer_identity,
             analyse_tender=analyse_tender,
             sync_tender_to_clay=never_called,
-            get_clay_intelligence=lambda *_: {},
+            competitor_review=never_called,
+            capability_assessment=never_called,
             qualify_bid=never_called,
             generate_briefing=lambda *_, **__: {},
         ),
-        buyer_name="",
+        buyer_name="Acme",
         buyer_domain="acme.com",
     )
 
     assert result.ok is False
     assert result.error is not None
     assert result.error.step == "validate_buyer_identity"
-    assert calls == ["ingest", "analyse"]
+    assert calls == ["ingest", "validate"]

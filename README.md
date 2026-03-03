@@ -7,12 +7,14 @@ Production-ready Python MCP server for an AI Tender Qualification Agent.
 This MCP server exposes tools for a ChatGPT App frontend to decide whether to bid on a tender:
 
 1. `ingest_tender_documents` — ingest a tender package (multi-doc) and return structured, typed documents.
-2. `analyse_tender` — use OpenAI to extract requirements, criteria, risks, complexity, and delivery scope.
-3. `get_clay_intelligence` — fetch buyer intelligence via a replaceable Clay integration layer (mock included).
-4. `qualify_bid` — apply transparent scoring logic to produce Bid / No Bid / Conditional recommendation.
-5. `generate_briefing` — create an executive summary for decision makers.
-6. `sync_tender_to_clay` — upsert Buyer by domain then create Tender row in Clay.
-7. `run_tender_workflow` — deterministic orchestration across ingestion, analysis, Clay sync, intelligence, qualification, and briefing.
+2. `validate_buyer_identity` — canonicalize buyer name/domain using Sculpt_Hack enrichment payloads (or direct inputs).
+3. `analyse_tender` — use OpenAI to extract requirements, criteria, risks, complexity, and delivery scope.
+4. `sync_tender_to_clay` — upsert Buyer by domain then create Tender row in Clay.
+5. `competitor_review` — normalize competitor context payloads into deterministic competitor structures.
+6. `capability_assessment` — merge US capability context (inline JSON or file) with buyer/competitor domains.
+7. `qualify_bid` — apply transparent scoring logic to produce Bid / No Bid / Conditional recommendation.
+8. `generate_briefing` — create an executive summary for decision makers.
+9. `run_tender_workflow` — deterministic orchestration across ingestion, buyer validation, analysis, Clay sync, competitor review, capability assessment, qualification, and briefing.
 
 ---
 
@@ -114,22 +116,22 @@ Analysis strategy:
 - Step C: run cross-document reasoning for conflicts, hidden obligations, unscored requirements, and commercial feasibility constraints.
 - Step D: aggregate into one unified `TenderAnalysis` response.
 
-### `get_clay_intelligence`
+### `validate_buyer_identity`
 
 **Input**
-- `organisation: string`
+- `buyer_name: string | null`
+- `buyer_domain: string | null`
+- `buyer_enrichment: object | null` (Sculpt_Hack `find-and-enrich-company` payload)
 
 **Output**
 ```json
 {
-  "organisation": "...",
+  "buyer_name": "...",
+  "buyer_domain": "acme.com",
   "company_profile": "...",
   "strategic_signals": ["..."],
-  "leadership_changes": ["..."],
-  "market_activity": ["..."],
-  "relationships": ["..."],
-  "competitive_context": ["..."],
-  "source": "clay|mock_clay_adapter"
+  "relationship_signals": ["..."],
+  "source": "sculpt_hack|manual"
 }
 ```
 
@@ -183,16 +185,57 @@ Flow:
 
 `buyer_ref` is optional and intentionally skipped for hackathon simplicity; Clay lookup/waterfall can link by domain.
 
+### `competitor_review`
+
+**Input**
+- `buyer_domain: string`
+- `competitor_context: object | null` (Sculpt_Hack competitor payload)
+
+**Output**
+```json
+{
+  "buyer_domain": "acme.com",
+  "competitors": [{"name": "OtherCo", "domain": "otherco.com"}],
+  "competitor_domains": ["otherco.com"],
+  "competitive_context": ["OtherCo active in buyer market."],
+  "source": "sculpt_hack|empty"
+}
+```
+
+### `capability_assessment`
+
+**Input**
+- `buyer_domain: string`
+- `competitor_review: object | null`
+- `us_context: object | null`
+- `us_table_path: string | null`
+
+**Output**
+```json
+{
+  "buyer_domain": "acme.com",
+  "buyer_summary": "...",
+  "buyer_capability": {},
+  "competitor_capabilities": [],
+  "relationship_signals": ["..."],
+  "strategic_signals": ["..."],
+  "coverage_gaps": ["..."],
+  "source": "us_context|json_file|empty"
+}
+```
+
 
 ### `run_tender_workflow`
 
 **Input**
 - `files: string[] | null`
 - `text: string | null`
-- `buyer_name: string`
-- `buyer_domain: string`
+- `buyer_name: string | null`
+- `buyer_domain: string | null`
+- `buyer_enrichment: object | null`
 - `us_context: object | null`
 - `competitor_context: object | null`
+- `us_table_path: string | null`
 - `correlation_id: string | null`
 
 **Output**
@@ -210,7 +253,7 @@ Flow:
 }
 ```
 
-Execution order (fail-fast): ingest -> analyse -> validate buyer identity -> sync to clay -> get clay intelligence -> qualify -> briefing.
+Execution order (fail-fast): ingest -> validate buyer identity -> analyse -> sync to clay -> competitor review -> capability assessment -> qualify -> briefing.
 
 ### `generate_briefing`
 

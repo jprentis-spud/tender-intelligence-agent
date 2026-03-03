@@ -25,9 +25,11 @@ LogFn = Callable[[dict[str, Any]], None]
 @dataclass(frozen=True)
 class WorkflowDependencies:
     ingest_tender_documents: Callable[..., dict]
+    validate_buyer_identity: Callable[..., dict]
     analyse_tender: Callable[..., dict]
     sync_tender_to_clay: Callable[..., dict]
-    get_clay_intelligence: Callable[[str], dict]
+    competitor_review: Callable[..., dict]
+    capability_assessment: Callable[..., dict]
     qualify_bid: Callable[..., dict]
     generate_briefing: Callable[..., dict]
 
@@ -101,6 +103,48 @@ def validate_clay_intelligence(payload: dict) -> ClayIntelligence:
     return clay
 
 
+def compose_clay_intelligence(
+    buyer_identity: dict[str, Any],
+    competitor_review: dict[str, Any] | None = None,
+    capability_assessment: dict[str, Any] | None = None,
+) -> ClayIntelligence:
+    competitor_review = competitor_review or {}
+    capability_assessment = capability_assessment or {}
+
+    organisation = str(buyer_identity.get("buyer_name") or buyer_identity.get("organisation") or "").strip()
+    if not organisation:
+        organisation = str(buyer_identity.get("buyer_domain") or "Unknown Organisation")
+
+    company_profile = str(
+        buyer_identity.get("company_profile")
+        or capability_assessment.get("buyer_summary")
+        or f"{organisation} buyer profile derived from workflow inputs."
+    )
+
+    competitive_signals = competitor_review.get("competitive_context")
+    if not isinstance(competitive_signals, list):
+        competitive_signals = []
+
+    relationship_signals = capability_assessment.get("relationship_signals")
+    if not isinstance(relationship_signals, list):
+        relationship_signals = []
+
+    strategic_signals = capability_assessment.get("strategic_signals")
+    if not isinstance(strategic_signals, list):
+        strategic_signals = []
+
+    return ClayIntelligence(
+        organisation=organisation,
+        company_profile=company_profile,
+        strategic_signals=[str(s) for s in strategic_signals if str(s).strip()],
+        leadership_changes=[],
+        market_activity=[],
+        relationships=[str(s) for s in relationship_signals if str(s).strip()],
+        competitive_context=[str(s) for s in competitive_signals if str(s).strip()],
+        source="workflow_composite",
+    )
+
+
 
 def validate_qualification_result(payload: dict) -> QualificationResult:
     qualification = QualificationResult.model_validate(payload)
@@ -117,8 +161,10 @@ def run_tender_workflow(
     text: str | None = None,
     buyer_name: str | None = None,
     buyer_domain: str | None = None,
+    buyer_enrichment: dict[str, Any] | None = None,
     us_context: dict[str, Any] | None = None,
     competitor_context: dict[str, Any] | None = None,
+    us_table_path: str | None = None,
     correlation_id: str | None = None,
     log_fn: LogFn | None = None,
 ) -> WorkflowResult:
@@ -133,6 +179,21 @@ def run_tender_workflow(
         package = validate_tender_package(package_payload)
         _emit(log_fn, corr_id, step, "completed", {"documents": len(package.documents)})
 
+        step = "validate_buyer_identity"
+        _emit(log_fn, corr_id, step, "started")
+        buyer_identity = deps.validate_buyer_identity(
+            buyer_name=buyer_name,
+            buyer_domain=buyer_domain,
+            buyer_enrichment=buyer_enrichment,
+        )
+        canonical_name = str(buyer_identity.get("buyer_name") or "").strip()
+        canonical_domain = str(buyer_identity.get("buyer_domain") or "").strip()
+        if not canonical_name:
+            raise ValueError("validate_buyer_identity did not return buyer_name")
+        if not canonical_domain:
+            raise ValueError("validate_buyer_identity did not return buyer_domain")
+        _emit(log_fn, corr_id, step, "completed", {"buyer_name": canonical_name, "buyer_domain": canonical_domain})
+
         step = "analyse_tender"
         _emit(log_fn, corr_id, step, "started", {"primary_document_type": package.primary_document_type})
         analysis_payload = deps.analyse_tender(
@@ -142,27 +203,47 @@ def run_tender_workflow(
         analysis = validate_tender_analysis(analysis_payload)
         _emit(log_fn, corr_id, step, "completed", {"requirements": len(analysis.requirements)})
 
-        step = "validate_buyer_identity"
-        _emit(log_fn, corr_id, step, "started")
-        if not buyer_name or not buyer_name.strip():
-            raise ValueError("buyer_name is required")
-        if not buyer_domain or not buyer_domain.strip():
-            raise ValueError("buyer_domain is required")
-        _emit(log_fn, corr_id, step, "completed", {"buyer_name": buyer_name, "buyer_domain": buyer_domain})
-
         step = "sync_tender_to_clay"
         _emit(log_fn, corr_id, step, "started")
         clay_sync = deps.sync_tender_to_clay(
-            buyer_name=buyer_name,
-            buyer_domain=buyer_domain,
+            buyer_name=canonical_name,
+            buyer_domain=canonical_domain,
             tender_analysis=analysis.model_dump(),
         )
         _emit(log_fn, corr_id, step, "completed", {"keys": sorted(clay_sync.keys()) if isinstance(clay_sync, dict) else []})
 
-        step = "get_clay_intelligence"
-        _emit(log_fn, corr_id, step, "started", {"lookup": buyer_domain})
-        clay_payload = deps.get_clay_intelligence(buyer_domain)
-        clay = validate_clay_intelligence(clay_payload)
+        step = "competitor_review"
+        _emit(log_fn, corr_id, step, "started", {"buyer_domain": canonical_domain})
+        competitor_review = deps.competitor_review(
+            buyer_domain=canonical_domain,
+            competitor_context=competitor_context,
+        )
+        _emit(
+            log_fn,
+            corr_id,
+            step,
+            "completed",
+            {"competitors": len(competitor_review.get("competitors", [])) if isinstance(competitor_review, dict) else 0},
+        )
+
+        step = "capability_assessment"
+        _emit(log_fn, corr_id, step, "started")
+        capability_assessment = deps.capability_assessment(
+            buyer_domain=canonical_domain,
+            competitor_review=competitor_review,
+            us_context=us_context,
+            us_table_path=us_table_path,
+        )
+        _emit(log_fn, corr_id, step, "completed", {"source": capability_assessment.get("source", "unknown")})
+
+        step = "compose_clay_intelligence"
+        _emit(log_fn, corr_id, step, "started")
+        clay = compose_clay_intelligence(
+            buyer_identity=buyer_identity,
+            competitor_review=competitor_review if isinstance(competitor_review, dict) else {},
+            capability_assessment=capability_assessment if isinstance(capability_assessment, dict) else {},
+        )
+        clay = validate_clay_intelligence(clay.model_dump())
         _emit(log_fn, corr_id, step, "completed", {"signals": len(clay.strategic_signals)})
 
         step = "qualify_bid"
@@ -170,8 +251,8 @@ def run_tender_workflow(
         qualification_payload = deps.qualify_bid(
             tender_analysis=analysis.model_dump(),
             clay_intelligence=clay.model_dump(),
-            us_context=us_context,
-            competitor_context=competitor_context,
+            us_context=capability_assessment if isinstance(capability_assessment, dict) else {},
+            competitor_context=competitor_review if isinstance(competitor_review, dict) else {},
             style_config={"mode": "INTERMEDIATE", "audience": "BID_MANAGER"},
         )
         qualification = validate_qualification_result(qualification_payload)
@@ -193,9 +274,12 @@ def run_tender_workflow(
             correlation_id=corr_id,
             started_at=started_at,
             finished_at=_utc_now(),
+            buyer_identity=buyer_identity if isinstance(buyer_identity, dict) else {},
             tender_package=package,
             tender_analysis=analysis,
             clay_sync=clay_sync if isinstance(clay_sync, dict) else {},
+            competitor_review=competitor_review if isinstance(competitor_review, dict) else {},
+            capability_assessment=capability_assessment if isinstance(capability_assessment, dict) else {},
             clay_intelligence=clay,
             qualification=qualification,
             briefing=briefing,
