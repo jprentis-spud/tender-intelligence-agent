@@ -12,6 +12,7 @@ This MCP server exposes tools for a ChatGPT App frontend to decide whether to bi
 4. `qualify_bid` — apply transparent scoring logic to produce Bid / No Bid / Conditional recommendation.
 5. `generate_briefing` — create an executive summary for decision makers.
 6. `sync_tender_to_clay` — upsert Buyer by domain then create Tender row in Clay.
+7. `run_tender_workflow` — deterministic orchestration across ingestion, analysis, Clay sync, intelligence, qualification, and briefing.
 
 ---
 
@@ -182,6 +183,35 @@ Flow:
 
 `buyer_ref` is optional and intentionally skipped for hackathon simplicity; Clay lookup/waterfall can link by domain.
 
+
+### `run_tender_workflow`
+
+**Input**
+- `files: string[] | null`
+- `text: string | null`
+- `buyer_name: string`
+- `buyer_domain: string`
+- `us_context: object | null`
+- `competitor_context: object | null`
+- `correlation_id: string | null`
+
+**Output**
+- `WorkflowResult` with either full successful payloads or structured failure:
+```json
+{
+  "ok": false,
+  "correlation_id": "...",
+  "error": {
+    "step": "validate_buyer_identity",
+    "error_type": "ValueError",
+    "message": "buyer_domain is required",
+    "debug_context": {}
+  }
+}
+```
+
+Execution order (fail-fast): ingest -> analyse -> validate buyer identity -> sync to clay -> get clay intelligence -> qualify -> briefing.
+
 ### `generate_briefing`
 
 **Input**
@@ -202,6 +232,34 @@ Flow:
 ```
 
 ---
+
+
+## Response style controller
+
+`StyleConfig` supports:
+- `mode`: `INTERMEDIATE | FINAL`
+- `audience`: `BID_MANAGER` (default)
+
+Behavior:
+- **INTERMEDIATE**: <=120 words, <=5 bullets, no tender text restatement, ends with one forward question.
+- **FINAL**: detailed structured briefing sections.
+
+Threading through tools:
+- `analyse_tender(..., style_config={"mode":"INTERMEDIATE","audience":"BID_MANAGER"})`
+- `qualify_bid(..., style_config={"mode":"INTERMEDIATE","audience":"BID_MANAGER"})`
+- `generate_briefing(..., style_config={"mode":"FINAL","audience":"BID_MANAGER"})`
+
+Prompt templates:
+- Analyse (INTERMEDIATE): `Mode: INTERMEDIATE. Respond concisely for a BID_MANAGER. Do not repeat source tender text. Max 120 words, up to 5 bullets, and end with one forward question.`
+- Qualify (INTERMEDIATE): `Mode: INTERMEDIATE. Provide short bid/no-bid rationale with key deltas only. Max 120 words, max 5 bullets, no tender-text restatement, and end with one decision-driving question.`
+- Briefing (FINAL): `Mode: FINAL for BID_MANAGER. Produce a detailed briefing with sections: Executive Summary, Recommendation, Win Themes, Key Risks, Next Actions. Include quantified values when available (win_probability, risk_level, strategic_value).`
+
+Example 4-turn transcript:
+1. `analyse_tender` (INTERMEDIATE) → concise status + one question.
+2. `qualify_bid` (INTERMEDIATE) → concise recommendation + one question.
+3. `sync_tender_to_clay` → persistence confirmation.
+4. `generate_briefing` (FINAL) → full detailed sections with quantified metrics.
+
 
 ## Architecture notes
 

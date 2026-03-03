@@ -68,3 +68,29 @@ class Briefing(BaseModel):
     win_probability: float
     top_considerations: list[str] = Field(default_factory=list)
     immediate_actions: list[str] = Field(default_factory=list)
+
+
+class StyleConfig(BaseModel):
+    mode: Literal["INTERMEDIATE", "FINAL"] = "INTERMEDIATE"
+    audience: Literal["BID_MANAGER"] = "BID_MANAGER"
+
+
+class WorkflowError(BaseModel):
+    step: str
+    error_type: str
+    message: str
+    debug_context: dict[str, str] = Field(default_factory=dict)
+
+
+class WorkflowResult(BaseModel):
+    ok: bool
+    correlation_id: str
+    started_at: str
+    finished_at: str
+    tender_package: TenderPackage | None = None
+    tender_analysis: TenderAnalysis | None = None
+    clay_sync: dict[str, object] = Field(default_factory=dict)
+    clay_intelligence: ClayIntelligence | None = None
+    qualification: QualificationResult | None = None
+    briefing: Briefing | None = None
+    error: WorkflowError | None = None
