@@ -61,10 +61,8 @@ class TenderAnalyser:
     def _call_json(self, system_prompt: str, user_content: str) -> dict:
         response = self.client.responses.create(
             model=settings.openai_model,
-            input=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_content},
-            ],
+            instructions=system_prompt,
+            input=user_content,
             temperature=0,
         )
         return json.loads(response.output_text.strip())
