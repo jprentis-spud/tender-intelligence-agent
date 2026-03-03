@@ -1,11 +1,17 @@
-"""Lightweight proxy client for Sculpt_Hack MCP HTTP gateway."""
+"""MCP SSE client proxy for Clay MCP gateway."""
 
 from __future__ import annotations
 
+import asyncio
+import json
+import logging
 from dataclasses import dataclass
 from typing import Any
 
-import requests
+from mcp.client.session import ClientSession
+from mcp.client.sse import sse_client
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -19,7 +25,7 @@ class SculptHackProxyConfig:
 
 
 class SculptHackProxyClient:
-    """Proxy wrapper with conservative endpoint fallback for Clay MCP gateway."""
+    """Connects to Clay MCP gateway via proper MCP SSE protocol."""
 
     def __init__(self, config: SculptHackProxyConfig) -> None:
         self.config = config
@@ -29,57 +35,82 @@ class SculptHackProxyClient:
         token_value = f"{self.config.auth_scheme} {self.config.api_key}".strip()
         return {
             self.config.auth_header: token_value,
-            "Content-Type": "application/json",
-            "Accept": "application/json",
         }
 
-    @property
-    def _candidate_urls(self) -> list[str]:
-        base = self.config.base_url.rstrip("/")
-        return [
-            f"{base}/tools/call",
-            f"{base}/tool/call",
-            f"{base}/call-tool",
-            base,
-        ]
+    async def _call_tool_async(self, tool_name: str, arguments: dict[str, Any]) -> dict[str, Any]:
+        """Call a tool on the remote MCP server via SSE transport."""
+        url = self.config.base_url.rstrip("/")
+        # MCP SSE endpoint is typically at /sse
+        sse_url = f"{url}/sse" if not url.endswith("/sse") else url
+
+        logger.info("Connecting to Clay MCP at %s", sse_url)
+
+        async with sse_client(
+            url=sse_url,
+            headers=self._headers,
+            timeout=self.config.timeout_seconds,
+        ) as (read_stream, write_stream):
+            async with ClientSession(read_stream, write_stream) as session:
+                await session.initialize()
+
+                logger.info("Calling tool '%s' with args: %s", tool_name, list(arguments.keys()))
+                result = await session.call_tool(tool_name, arguments)
+
+                if result.isError:
+                    error_text = " ".join(
+                        getattr(c, "text", str(c)) for c in result.content
+                    )
+                    raise RuntimeError(
+                        f"Clay MCP tool '{tool_name}' returned error: {error_text}"
+                    )
+
+                # Extract structured content if available
+                if result.structuredContent and isinstance(result.structuredContent, dict):
+                    return result.structuredContent
+
+                # Fall back to parsing text content as JSON
+                for content_block in result.content:
+                    text = getattr(content_block, "text", None)
+                    if text:
+                        try:
+                            parsed = json.loads(text)
+                            if isinstance(parsed, dict):
+                                return parsed
+                        except (json.JSONDecodeError, TypeError):
+                            continue
+
+                # Return raw text content as a dict
+                texts = [getattr(c, "text", str(c)) for c in result.content]
+                return {"raw_content": texts, "tool": tool_name}
 
     def call_tool(self, tool_name: str, arguments: dict[str, Any]) -> dict[str, Any]:
-        """Call a remote Sculpt_Hack tool with fallback payload/endpoint formats."""
+        """Sync wrapper — call a remote MCP tool via SSE."""
         last_error: Exception | None = None
-        attempts = max(1, self.config.retries)
 
-        payloads: list[dict[str, Any]] = [
-            {"name": tool_name, "arguments": arguments},
-            {"tool": tool_name, "input": arguments},
-            {"method": "tools/call", "params": {"name": tool_name, "arguments": arguments}},
-            {"jsonrpc": "2.0", "id": "1", "method": "tools/call", "params": {"name": tool_name, "arguments": arguments}},
-        ]
+        for attempt in range(max(1, self.config.retries)):
+            try:
+                loop = asyncio.get_running_loop()
+            except RuntimeError:
+                loop = None
 
-        for _ in range(attempts):
-            for url in self._candidate_urls:
-                for payload in payloads:
-                    try:
-                        response = requests.post(
-                            url,
-                            headers=self._headers,
-                            json=payload,
-                            timeout=self.config.timeout_seconds,
-                        )
-                        if response.status_code in {404, 405, 422}:
-                            continue
-                        response.raise_for_status()
-                        body = response.json()
-                        if isinstance(body, dict):
-                            # Normalize common MCP wrappers.
-                            if isinstance(body.get("result"), dict):
-                                return body["result"]
-                            if isinstance(body.get("data"), dict):
-                                return body["data"]
-                            return body
-                    except requests.RequestException as exc:
-                        last_error = exc
-                        continue
+            try:
+                if loop and loop.is_running():
+                    # Already inside an async context — run in a new thread
+                    import concurrent.futures
+                    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+                        future = pool.submit(asyncio.run, self._call_tool_async(tool_name, arguments))
+                        return future.result(timeout=self.config.timeout_seconds + 10)
+                else:
+                    return asyncio.run(self._call_tool_async(tool_name, arguments))
+            except Exception as exc:
+                logger.warning(
+                    "MCP call attempt %d/%d for '%s' failed: %s",
+                    attempt + 1,
+                    self.config.retries,
+                    tool_name,
+                    exc,
+                )
+                last_error = exc
 
-        detail = str(last_error) if last_error else "Unknown proxy error"
-        raise RuntimeError(f"Sculpt_Hack proxy call failed for tool '{tool_name}': {detail}")
-
+        detail = str(last_error) if last_error else "Unknown MCP proxy error"
+        raise RuntimeError(f"Clay MCP call failed for tool '{tool_name}': {detail}")
