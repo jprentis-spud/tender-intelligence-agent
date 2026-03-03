@@ -69,7 +69,6 @@ class TenderAnalyser:
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": user_content},
                 ],
-                temperature=0,
             )
             return json.loads(response.choices[0].message.content.strip())
         except OpenAIError as exc:

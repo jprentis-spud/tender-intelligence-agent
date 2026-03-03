@@ -49,7 +49,6 @@ class DocumentTypeDetector:
                         "content": f"Filename: {filename}\n\nDocument excerpt:\n{sample}",
                     },
                 ],
-                temperature=0,
             )
             payload = json.loads(response.output_text.strip())
             doc_type = payload.get("type", "unknown")
