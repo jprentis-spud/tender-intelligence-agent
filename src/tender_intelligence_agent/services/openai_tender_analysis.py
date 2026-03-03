@@ -59,13 +59,15 @@ class TenderAnalyser:
         self.client = OpenAI(api_key=settings.openai_api_key)
 
     def _call_json(self, system_prompt: str, user_content: str) -> dict:
-        response = self.client.responses.create(
+        response = self.client.chat.completions.create(
             model=settings.openai_model,
-            instructions=system_prompt,
-            input=user_content,
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_content},
+            ],
             temperature=0,
         )
-        return json.loads(response.output_text.strip())
+        return json.loads(response.choices[0].message.content.strip())
 
     def _analyse_primary_document(self, primary_doc: TenderDocument) -> TenderAnalysis:
         chunks = chunk_text(primary_doc.text, settings.max_chunk_chars)
