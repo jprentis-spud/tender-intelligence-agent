@@ -13,6 +13,8 @@ from mcp.client.streamable_http import streamablehttp_client
 
 from tender_intelligence_agent.services.async_bridge import run_coro
 
+from tender_intelligence_agent.services.async_bridge import run_coro
+
 logger = logging.getLogger(__name__)
 
 
@@ -117,6 +119,19 @@ class SculptHackProxyClient:
 
         detail = str(last_error) if last_error else "Unknown MCP endpoint failure"
         raise RuntimeError(f"Unable to connect to Clay MCP endpoint: {detail}")
+
+    async def _call_tool_async(self, tool_name: str, arguments: dict[str, Any]) -> dict[str, Any]:
+        """Call a tool on the remote MCP server via SSE transport."""
+        last_error: Exception | None = None
+        for candidate_url in self._candidate_sse_urls(self.config.base_url):
+            try:
+                return await self._call_tool_once_async(candidate_url, tool_name, arguments)
+            except Exception as exc:
+                logger.warning("MCP SSE endpoint attempt failed for %s: %s", candidate_url, exc)
+                last_error = exc
+
+        detail = str(last_error) if last_error else "Unknown MCP endpoint failure"
+        raise RuntimeError(f"Unable to connect to Clay MCP SSE endpoint: {detail}")
 
     def call_tool(self, tool_name: str, arguments: dict[str, Any]) -> dict[str, Any]:
         """Sync wrapper — call a remote MCP tool."""
