@@ -31,7 +31,7 @@ class Settings:
     max_chunk_chars: int = int(os.getenv("MAX_CHUNK_CHARS", "12000"))
 
     # Server / transport settings
-    transport: str = os.getenv("MCP_TRANSPORT", "sse")
+    transport: str = os.getenv("MCP_TRANSPORT", "streamable-http")
     host: str = os.getenv("HOST", "0.0.0.0")
     port: int = int(os.getenv("PORT", "8000"))
 
