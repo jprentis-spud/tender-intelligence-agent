@@ -34,6 +34,13 @@ class SculptHackProxyClient:
     @property
     def _headers(self) -> dict[str, str]:
         token_value = f"{self.config.auth_scheme} {self.config.api_key}".strip()
+        key_preview = self.config.api_key[:8] + "..." if self.config.api_key else "<empty>"
+        logger.info(
+            "Clay MCP auth: header=%s, scheme=%s, key_preview=%s",
+            self.config.auth_header,
+            self.config.auth_scheme,
+            key_preview,
+        )
         return {
             self.config.auth_header: token_value,
         }
