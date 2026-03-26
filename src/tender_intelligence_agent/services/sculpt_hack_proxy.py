@@ -56,6 +56,17 @@ class SculptHackProxyClient:
     async def _call_tool_once_async(self, url: str, tool_name: str, arguments: dict[str, Any]) -> dict[str, Any]:
         logger.info("Connecting to Clay MCP at %s", url)
 
+        # Debug: raw POST to see exact 401 response body from Clay
+        import httpx as _httpx
+        async with _httpx.AsyncClient() as _dbg:
+            _resp = await _dbg.post(
+                url,
+                headers={**self._headers, "Content-Type": "application/json", "Accept": "application/json, text/event-stream"},
+                json={"jsonrpc": "2.0", "method": "initialize", "id": 1, "params": {"protocolVersion": "2024-11-05", "capabilities": {}, "clientInfo": {"name": "tender-intelligence-agent", "version": "1.0.0"}}},
+                timeout=10.0,
+            )
+            logger.error("Clay MCP debug response: status=%d body=%s", _resp.status_code, _resp.text[:500])
+
         async with streamablehttp_client(
             url=url,
             headers=self._headers,
