@@ -20,17 +20,16 @@ def test_run_coro_with_running_loop() -> None:
     assert asyncio.run(_runner()) == 3
 
 
-def test_candidate_sse_urls_from_base_path() -> None:
+def test_normalize_url_from_base_path() -> None:
     client = SculptHackProxyClient(SculptHackProxyConfig(base_url="https://api.clay.com/v3/mcp", api_key="x"))
-    assert client._candidate_sse_urls(client.config.base_url) == [
-        "https://api.clay.com/v3/mcp/sse",
-        "https://api.clay.com/v3/mcp",
-    ]
+    assert client._normalize_url(client.config.base_url) == "https://api.clay.com/v3/mcp"
 
 
-def test_candidate_sse_urls_from_explicit_sse_path() -> None:
+def test_normalize_url_strips_sse_suffix() -> None:
     client = SculptHackProxyClient(SculptHackProxyConfig(base_url="https://api.clay.com/v3/mcp/sse", api_key="x"))
-    assert client._candidate_sse_urls(client.config.base_url) == [
-        "https://api.clay.com/v3/mcp/sse",
-        "https://api.clay.com/v3/mcp",
-    ]
+    assert client._normalize_url(client.config.base_url) == "https://api.clay.com/v3/mcp"
+
+
+def test_normalize_url_strips_trailing_slash() -> None:
+    client = SculptHackProxyClient(SculptHackProxyConfig(base_url="https://api.clay.com/v3/mcp/", api_key="x"))
+    assert client._normalize_url(client.config.base_url) == "https://api.clay.com/v3/mcp"

@@ -1,4 +1,4 @@
-"""MCP SSE client proxy for Clay MCP gateway."""
+"""MCP Streamable HTTP client proxy for Clay MCP gateway."""
 
 from __future__ import annotations
 
@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from mcp.client.session import ClientSession
-from mcp.client.sse import sse_client
+from mcp.client.streamable_http import streamablehttp_client
 
 from tender_intelligence_agent.services.async_bridge import run_coro
 
@@ -26,7 +26,7 @@ class SculptHackProxyConfig:
 
 
 class SculptHackProxyClient:
-    """Connects to Clay MCP gateway via proper MCP SSE protocol."""
+    """Connects to Clay MCP gateway via Streamable HTTP transport."""
 
     def __init__(self, config: SculptHackProxyConfig) -> None:
         self.config = config
@@ -39,20 +39,21 @@ class SculptHackProxyClient:
         }
 
     @staticmethod
-    def _candidate_sse_urls(base_url: str) -> list[str]:
+    def _normalize_url(base_url: str) -> str:
+        """Ensure the URL points to the MCP endpoint without trailing /sse."""
         url = base_url.rstrip("/")
         if url.endswith("/sse"):
-            return [url, url.removesuffix("/sse")]
-        return [f"{url}/sse", url]
+            url = url.removesuffix("/sse")
+        return url
 
-    async def _call_tool_once_async(self, sse_url: str, tool_name: str, arguments: dict[str, Any]) -> dict[str, Any]:
-        logger.info("Connecting to Clay MCP at %s", sse_url)
+    async def _call_tool_once_async(self, url: str, tool_name: str, arguments: dict[str, Any]) -> dict[str, Any]:
+        logger.info("Connecting to Clay MCP at %s", url)
 
-        async with sse_client(
-            url=sse_url,
+        async with streamablehttp_client(
+            url=url,
             headers=self._headers,
             timeout=self.config.timeout_seconds,
-        ) as (read_stream, write_stream):
+        ) as (read_stream, write_stream, _):
             async with ClientSession(read_stream, write_stream) as session:
                 await session.initialize()
 
@@ -87,17 +88,13 @@ class SculptHackProxyClient:
                 return {"raw_content": texts, "tool": tool_name}
 
     async def _call_tool_async(self, tool_name: str, arguments: dict[str, Any]) -> dict[str, Any]:
-        """Call a tool on the remote MCP server via SSE transport."""
-        last_error: Exception | None = None
-        for candidate_url in self._candidate_sse_urls(self.config.base_url):
-            try:
-                return await self._call_tool_once_async(candidate_url, tool_name, arguments)
-            except Exception as exc:
-                logger.warning("MCP SSE endpoint attempt failed for %s: %s", candidate_url, exc)
-                last_error = exc
-
-        detail = str(last_error) if last_error else "Unknown MCP endpoint failure"
-        raise RuntimeError(f"Unable to connect to Clay MCP SSE endpoint: {detail}")
+        """Call a tool on the remote MCP server via Streamable HTTP transport."""
+        url = self._normalize_url(self.config.base_url)
+        try:
+            return await self._call_tool_once_async(url, tool_name, arguments)
+        except Exception as exc:
+            logger.warning("MCP Streamable HTTP endpoint failed for %s: %s", url, exc)
+            raise RuntimeError(f"Unable to connect to Clay MCP endpoint: {exc}") from exc
 
     def call_tool(self, tool_name: str, arguments: dict[str, Any]) -> dict[str, Any]:
         """Sync wrapper — call a remote MCP tool via SSE."""
