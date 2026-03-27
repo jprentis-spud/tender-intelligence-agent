@@ -19,7 +19,7 @@ from tender_intelligence_agent.models import (
     StyleConfig,
     TenderAnalysis,
     TenderPackage,
-    WorkflowResult,
+
 )
 from tender_intelligence_agent.services.briefing import generate_briefing as build_briefing
 from tender_intelligence_agent.services.clay_adapter import ClayAdapter, ClayRestAdapter, MockClayAdapter
@@ -35,10 +35,6 @@ from tender_intelligence_agent.services.style_controller import (
     INTERMEDIATE_QUALIFY_PROMPT,
     build_intermediate_status,
     render_response,
-)
-from tender_intelligence_agent.services.workflow_orchestrator import (
-    WorkflowDependencies,
-    run_tender_workflow as orchestrate,
 )
 
 mcp = FastMCP("tender-intelligence-agent", host=settings.host, port=settings.port)
@@ -70,16 +66,30 @@ clay_adapter = _build_clay_adapter()
 
 
 def _build_sculpt_hack_proxy() -> SculptHackProxyClient:
-    if not settings.sculpt_hack_api_key:
-        raise ValueError("SCULPT_HACK_API_KEY (or CLAY_API_KEY) is required for Sculpt_Hack proxy tools.")
+    has_oauth = bool(
+        settings.clay_oauth_client_id
+        and settings.clay_oauth_client_secret
+        and settings.clay_oauth_refresh_token
+    )
+    api_key = settings.sculpt_hack_api_key or settings.clay_api_key
+
+    if not has_oauth and not api_key:
+        raise ValueError(
+            "Clay OAuth credentials (CLAY_OAUTH_CLIENT_ID, CLAY_OAUTH_CLIENT_SECRET, "
+            "CLAY_OAUTH_REFRESH_TOKEN) or CLAY_API_KEY is required for enrichment tools."
+        )
+
     return SculptHackProxyClient(
         SculptHackProxyConfig(
-            base_url=settings.clay_mcp_base_url,
-            api_key=settings.sculpt_hack_api_key,
-            auth_header=settings.sculpt_hack_auth_header,
-            auth_scheme=settings.sculpt_hack_auth_scheme,
+            base_url=settings.clay_mcp_base_url if has_oauth else settings.clay_base_url,
             timeout_seconds=settings.sculpt_hack_timeout_seconds,
             retries=settings.sculpt_hack_retries,
+            oauth_client_id=settings.clay_oauth_client_id,
+            oauth_client_secret=settings.clay_oauth_client_secret,
+            oauth_refresh_token=settings.clay_oauth_refresh_token,
+            api_key=api_key,
+            company_table_id=settings.clay_company_table_id,
+            contacts_table_id=settings.clay_buyer_table_id,
         )
     )
 
@@ -492,44 +502,6 @@ def sync_tender_to_clay(buyer_name: str, buyer_domain: str, tender_analysis: dic
         buyer_domain=buyer_domain,
         tender_analysis=analysis.model_dump(),
     )
-
-
-@mcp.tool()
-def run_tender_workflow(
-    files: list[str] | None = None,
-    text: str | None = None,
-    buyer_name: str | None = None,
-    buyer_domain: str | None = None,
-    buyer_enrichment: dict | None = None,
-    us_context: dict | None = None,
-    competitor_context: dict | None = None,
-    us_table_path: str | None = None,
-    correlation_id: str | None = None,
-) -> dict:
-    """Deterministic end-to-end tender workflow orchestrator."""
-    deps = WorkflowDependencies(
-        ingest_tender_documents=ingest_tender_documents,
-        validate_buyer_identity=validate_buyer_identity,
-        analyse_tender=analyse_tender,
-        competitor_review=competitor_review,
-        capability_assessment=capability_assessment,
-        qualify_bid=qualify_bid,
-        generate_briefing=generate_briefing,
-    )
-
-    workflow: WorkflowResult = orchestrate(
-        deps=deps,
-        files=files,
-        text=text,
-        buyer_name=buyer_name,
-        buyer_domain=buyer_domain,
-        buyer_enrichment=buyer_enrichment,
-        us_context=us_context,
-        competitor_context=competitor_context,
-        us_table_path=us_table_path,
-        correlation_id=correlation_id,
-    )
-    return workflow.model_dump()
 
 
 def run() -> None:

@@ -30,6 +30,11 @@ class Settings:
     clay_tender_table_id: str | None = os.getenv("CLAY_TENDER_TABLE_ID")
     max_chunk_chars: int = int(os.getenv("MAX_CHUNK_CHARS", "12000"))
 
+    # Clay OAuth (for MCP endpoint)
+    clay_oauth_client_id: str | None = os.getenv("CLAY_OAUTH_CLIENT_ID")
+    clay_oauth_client_secret: str | None = os.getenv("CLAY_OAUTH_CLIENT_SECRET")
+    clay_oauth_refresh_token: str | None = os.getenv("CLAY_OAUTH_REFRESH_TOKEN")
+
     # Server / transport settings
     transport: str = os.getenv("MCP_TRANSPORT", "streamable-http")
     host: str = os.getenv("HOST", "0.0.0.0")
